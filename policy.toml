@@ -1,0 +1,28 @@
+# Firewall policy. Amounts in INR. Edit and restart; no code changes needed.
+
+[limits]
+per_transfer_max = 200000          # hard ceiling for one transfer
+daily_total_max = 300000           # across transfers and bills, per customer per day
+approval_above = 25000             # anything bigger needs the customer to confirm
+max_payments_per_hour = 6
+structuring_window_minutes = 60    # several payments just under approval_above inside this window
+structuring_count = 3
+structuring_band = 0.80            # "just under" = between 80% and 100% of approval_above
+
+[new_payee]
+cooldown_hours = 24                # payees younger than this are "new"
+cooldown_max_without_approval = 10000
+
+[untrusted]
+# An amount that only appears in a bill/invoice (not typed by the customer) may be paid
+# without confirmation up to this value, when the customer asked to pay that bill.
+auto_pay_document_amount_max = 10000
+# Untrusted content scoring at or above this injection score taints its values as hostile.
+hostile_score = 4.0
+
+[memo]
+blocked_words = ["otp", "pin", "cvv", "password", "passcode", "upi pin"]
+
+[quiet_hours]
+start = 0                          # local hour, inclusive
+end = 5                            # exclusive; money movement inside needs approval
