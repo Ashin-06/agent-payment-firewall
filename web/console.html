@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Assistant Firewall Console</title>
+<style>
+  :root { --bg:#f5f6f8; --card:#fff; --ink:#15181d; --muted:#5f6876; --line:#e1e4e9; --accent:#2457d6;
+          --ok:#13795b; --warn:#a86400; --bad:#c22f2f; --code:#f0f2f5; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0e1115; --card:#161a20; --ink:#e8ecf1; --muted:#97a1ae; --line:#29303a; --accent:#7096ff;
+            --ok:#3dcc96; --warn:#f2a945; --bad:#ff6f6f; --code:#1d232b; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--ink); }
+  header { display:flex; align-items:center; gap:12px; padding:14px 20px; border-bottom:1px solid var(--line); background:var(--card); flex-wrap:wrap; }
+  header h1 { font-size:17px; margin:0; flex:1; }
+  .toggle { display:flex; align-items:center; gap:6px; color:var(--muted); }
+  main { display:grid; grid-template-columns: minmax(0,1.3fr) minmax(0,1fr); gap:16px; padding:16px; max-width:1300px; margin:0 auto; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; }
+  .card h2 { font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:0 0 10px; }
+  #log { height:440px; overflow-y:auto; display:flex; flex-direction:column; gap:10px; }
+  .msg { padding:8px 12px; border-radius:10px; max-width:90%; white-space:pre-wrap; }
+  .me { align-self:flex-end; background:var(--accent); color:#fff; }
+  .bot { align-self:flex-start; background:var(--code); }
+  .step { font:12px/1.4 ui-monospace,Consolas,monospace; color:var(--muted); align-self:flex-start; }
+  .step b.executed { color:var(--ok); } .step b.held { color:var(--warn); } .step b.denied, .step b.error { color:var(--bad); }
+  form { display:flex; gap:8px; margin-top:10px; }
+  input[type=text] { flex:1; padding:9px 11px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--ink); font:inherit; }
+  button { font:inherit; font-weight:600; padding:8px 14px; border:0; border-radius:8px; background:var(--accent); color:#fff; cursor:pointer; }
+  button.secondary { background:var(--code); color:var(--ink); }
+  button.deny { background:var(--bad); } button.approve { background:var(--ok); }
+  .side { display:flex; flex-direction:column; gap:16px; }
+  .pending { border:1px solid var(--warn); border-radius:8px; padding:10px; margin-bottom:8px; }
+  .pending code { background:var(--code); padding:1px 5px; border-radius:4px; }
+  .reason { color:var(--muted); font-size:13px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  td, th { text-align:left; padding:4px 6px; border-bottom:1px solid var(--line); }
+  #audit { max-height:260px; overflow-y:auto; font:12px/1.4 ui-monospace,Consolas,monospace; }
+  .chain-ok { color:var(--ok); } .chain-bad { color:var(--bad); }
+  .hint { color:var(--muted); font-size:13px; margin:6px 0 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Assistant Firewall Console</h1>
+  <label class="toggle"><input type="checkbox" id="enforce" checked> firewall on</label>
+  <button class="secondary" id="reset">Reset demo account</button>
+</header>
+<main>
+  <section class="card">
+    <h2>Assistant</h2>
+    <div id="log"></div>
+    <form id="chat"><input type="text" id="input" placeholder="e.g. Please pay the Acme Interiors invoice INV-2291 in my documents." autocomplete="off"><button>Send</button></form>
+    <p class="hint">Try the poisoned documents: inv-2291, email-rent, email-kyc, email-cfo, web-cashback, msg-rohan. Turn the firewall off and reset to compare.</p>
+  </section>
+  <div class="side">
+    <section class="card"><h2>Waiting for your approval</h2><div id="pending"><p class="reason">Nothing pending.</p></div></section>
+    <section class="card"><h2>Account</h2><div id="account"></div></section>
+    <section class="card"><h2>Audit trail <span id="chain"></span></h2><div id="audit"></div></section>
+  </div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const inr = (n) => "₹" + Number(n).toLocaleString("en-IN");
+
+function add(cls, html) { const d = document.createElement("div"); d.className = cls; d.innerHTML = html; $("log").append(d); $("log").scrollTop = 1e9; }
+
+async function refresh() {
+  const s = await (await fetch("/api/state")).json();
+  $("enforce").checked = s.enforce;
+  $("pending").innerHTML = s.pending.length ? s.pending.map((p) => `
+    <div class="pending"><div><code>${esc(p.tool)}</code> ${esc(JSON.stringify(p.args))}</div>
+      ${p.reasons.map((r) => `<div class="reason">${esc(r)}</div>`).join("")}
+      <div style="margin-top:8px;display:flex;gap:8px"><button class="approve" data-id="${p.id}" data-ok="1">Approve</button><button class="deny" data-id="${p.id}" data-ok="0">Decline</button></div>
+    </div>`).join("") : '<p class="reason">Nothing pending.</p>';
+  $("account").innerHTML = `<p><strong>${inr(s.balance.balance)}</strong> available</p>
+    <table><tr><th>Payee</th><th>Account</th></tr>${s.payees.map((p) => `<tr><td>${esc(p.name)}</td><td>${esc(p.account_number)}</td></tr>`).join("")}</table>
+    <table style="margin-top:10px"><tr><th>Recent</th><th>Amount</th></tr>${s.ledger.slice(0, 6).map((t) => `<tr><td>${esc(t.counterparty)}</td><td>${t.kind === "credit" ? "+" : "−"}${inr(t.amount)}</td></tr>`).join("")}</table>`;
+  const a = await (await fetch("/api/audit")).json();
+  $("chain").innerHTML = a.verified ? '<span class="chain-ok">· chain intact</span>' : '<span class="chain-bad">· ' + esc(a.message) + "</span>";
+  $("audit").innerHTML = a.entries.slice().reverse().map((e) => `<div>#${e.seq} <b>${esc(e.event)}</b> ${esc(e.tool || "")} ${esc((e.reasons || []).join(" "))}</div>`).join("");
+}
+
+$("pending").addEventListener("click", async (ev) => {
+  const b = ev.target.closest("button[data-id]");
+  if (!b) return;
+  const r = await fetch(`/api/approvals/${b.dataset.id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ approve: b.dataset.ok === "1" }) });
+  const body = await r.json();
+  add("step", `approval ${esc(b.dataset.id)}: <b class="${r.ok ? body.status : "error"}">${esc(r.ok ? body.status : body.detail)}</b>`);
+  refresh();
+});
+
+$("chat").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const text = $("input").value.trim();
+  if (!text) return;
+  $("input").value = "";
+  add("msg me", esc(text));
+  const r = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: text }) });
+  const body = await r.json();
+  if (!r.ok) { add("msg bot", esc(body.detail)); return; }
+  for (const s of body.steps) add("step", `${esc(s.tool)} ${esc(JSON.stringify(s.args))} → <b class="${s.status}">${s.status}</b>`);
+  add("msg bot", esc(body.reply));
+  refresh();
+});
+
+async function doReset() {
+  await fetch("/api/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enforce: $("enforce").checked }) });
+  $("log").innerHTML = "";
+  refresh();
+}
+$("reset").addEventListener("click", doReset);
+$("enforce").addEventListener("change", doReset);
+refresh();
+</script>
+</body>
+</html>
