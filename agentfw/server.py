@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 import os
+import re
 import threading
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .agent import ClaudeAgent
 from .audit import AuditLog
@@ -37,7 +38,7 @@ reset()
 
 
 class ChatIn(BaseModel):
-    message: str
+    message: str = Field(..., min_length=1, max_length=4000)
 
 
 class DecisionIn(BaseModel):
@@ -53,9 +54,31 @@ def index():
     return FileResponse(ROOT / "web" / "console.html")
 
 
+SCENARIO_ID = re.compile(r"\b([AB]\d{2})\b", re.I)
+
+
+def offline_reply(message: str) -> dict:
+    """Without an API key there is no assistant. The console can still replay one of the
+    benchmark scenarios when the message names it explicitly ("replay A01")."""
+    from .agent import TraceAgent
+
+    m = SCENARIO_ID.search(message)
+    scenario = next((sc for sc in SCENARIOS if m and sc.id == m.group(1).upper()), None)
+    if scenario is None:
+        ids = ", ".join(sc.id for sc in SCENARIOS)
+        raise HTTPException(503, "No ANTHROPIC_API_KEY is set, so the assistant is offline. "
+                                 f"Type 'replay <id>' to replay a benchmark scenario instead ({ids}).")
+    res = TraceAgent(state["gw"]).run(" ".join(scenario.user), scenario.trace)
+    return {"reply": f"Replayed scenario {scenario.id} ({scenario.title}) as a compromised assistant would run it. "
+                     "See each tool call's decision above.",
+            "steps": [s.__dict__ for s in res.steps]}
+
+
 @app.post("/api/chat")
 def chat(body: ChatIn):
     with _lock:
+        if not os.environ.get("ANTHROPIC_API_KEY"):
+            return offline_reply(body.message)
         if state["agent"] is None:
             try:
                 state["agent"] = ClaudeAgent(state["gw"])
@@ -87,7 +110,7 @@ def decide(pid: str, body: DecisionIn):
     gw = state["gw"]
     with _lock:
         try:
-            p = gw.approvals.decide(pid, body.approve, "customer (console)")
+            gw.approvals.decide(pid, body.approve, "customer (console)")
         except (KeyError, ValueError) as e:
             raise HTTPException(400, str(e)) from e
         gw.audit.append("approval_decision", approval_id=pid, approved=body.approve)

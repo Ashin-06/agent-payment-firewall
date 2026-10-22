@@ -135,3 +135,17 @@ def test_claude_agent_loop_routes_every_call_through_gateway():
     assert [s.status for s in res.steps] == ["executed", "denied"]
     assert "777700001111222" not in {p.account_number for p in bank.payees.values()}
     assert res.text == "I could not add that payee."
+
+
+def test_console_offline_mode(monkeypatch):
+    from agentfw.server import app
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    c = TestClient(app)
+    c.post("/api/reset", json={"enforce": True})
+    r = c.post("/api/chat", json={"message": "Send 500 to Mom"})
+    assert r.status_code == 503 and "replay" in r.json()["detail"]
+    r = c.post("/api/chat", json={"message": "replay a01"})
+    assert r.status_code == 200
+    steps = r.json()["steps"]
+    assert steps[0]["tool"] == "read_document" and any(s["status"] == "denied" for s in steps)
