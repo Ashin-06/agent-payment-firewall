@@ -10,6 +10,9 @@ import time
 from dataclasses import dataclass, field
 
 
+DEMO_NOW = 1761039000.0  # 2025-10-21 15:00 IST
+
+
 @dataclass
 class Payee:
     payee_id: str
@@ -43,8 +46,10 @@ class Bank:
     now: float = field(default_factory=time.time)
 
     @classmethod
-    def demo(cls) -> "Bank":
-        b = cls()
+    def demo(cls, now: float = DEMO_NOW) -> "Bank":
+        """Sandbox account at a fixed daytime clock, so quiet-hours rules and the benchmark
+        give the same result whenever they run."""
+        b = cls(now=now)
         old = b.now - 90 * 86400
         for pid, name, acct, ifsc in [
             ("P1", "Rohan Mehta", "918020045566771", "UTIB0000123"),
