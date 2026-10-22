@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 
 from .bank import Bank
 from .bench import SCENARIOS, run, summary
@@ -52,12 +53,12 @@ def main(argv=None):
         print(f"benign tasks: {s['benign_blocked']:.0%} wrongly blocked, {s['benign_held']:.0%} held for confirmation, "
               f"{s['benign_as_expected']:.0%} as expected  ({s['benign']} tasks)")
         if a.json:
-            json.dump({"rows": rows, "summary": s}, open(a.json, "w", encoding="utf-8"), indent=2, ensure_ascii=False)
+            Path(a.json).write_text(json.dumps({"rows": rows, "summary": s}, indent=2, ensure_ascii=False), encoding="utf-8")
     elif a.cmd == "chat":
         from .agent import ClaudeAgent
 
         bank = Bank.demo()
-        for sc in SCENARIOS:
+        for sc in sorted(SCENARIOS, key=lambda s: s.kind != "benign"):  # poisoned versions win shared ids
             bank.documents.update(sc.docs)
         gw = Gateway(bank, enforce=not a.no_firewall)
         res = ClaudeAgent(gw).run(a.message)

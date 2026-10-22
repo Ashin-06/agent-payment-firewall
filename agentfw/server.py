@@ -27,7 +27,9 @@ state: dict = {}
 
 def reset(enforce: bool = True) -> None:
     bank = Bank.demo()
-    for sc in SCENARIOS:  # make every scenario's documents available to try live
+    # make every scenario's documents available to try live; attack versions load last so a
+    # shared id (inv-2291) shows the poisoned invoice the console hint refers to
+    for sc in sorted(SCENARIOS, key=lambda s: s.kind != "benign"):
         bank.documents.update(sc.docs)
     key = os.environ.get("AGENTFW_AUDIT_KEY")
     gw = Gateway(bank, audit=AuditLog(key=key.encode() if key else None), enforce=enforce)
@@ -68,6 +70,7 @@ def offline_reply(message: str) -> dict:
         ids = ", ".join(sc.id for sc in SCENARIOS)
         raise HTTPException(503, "No ANTHROPIC_API_KEY is set, so the assistant is offline. "
                                  f"Type 'replay <id>' to replay a benchmark scenario instead ({ids}).")
+    state["bank"].documents.update(scenario.docs)
     res = TraceAgent(state["gw"]).run(" ".join(scenario.user), scenario.trace)
     return {"reply": f"Replayed scenario {scenario.id} ({scenario.title}) as a compromised assistant would run it. "
                      "See each tool call's decision above.",
