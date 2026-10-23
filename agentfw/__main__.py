@@ -3,6 +3,7 @@
     python -m agentfw bench [--live] [--only A01 B02]
     python -m agentfw chat "Pay the Acme invoice inv-2291" [--no-firewall]
     python -m agentfw scan path/to/email.txt
+    python -m agentfw realdata --gandalf DIR --deepset DIR --agentdojo agentdojo_banking.json
     python -m agentfw serve --port 8004
 """
 from __future__ import annotations
@@ -32,6 +33,11 @@ def main(argv=None):
     c.add_argument("--no-firewall", action="store_true")
     s = sub.add_parser("scan", help="injection scan of a text file")
     s.add_argument("file")
+    r = sub.add_parser("realdata", help="detector on real injection prompts, firewall on AgentDojo banking")
+    r.add_argument("--gandalf", help="Lakera/gandalf_ignore_instructions download")
+    r.add_argument("--deepset", help="deepset/prompt-injections download")
+    r.add_argument("--agentdojo", help="JSON from python -m agentfw.agentdojo_export")
+    r.add_argument("--out", default="results/real_data.json")
     v = sub.add_parser("serve")
     v.add_argument("--port", type=int, default=8004)
     v.add_argument("--host", default="127.0.0.1")
@@ -72,6 +78,10 @@ def main(argv=None):
         print(f"injection score {r.score:.1f} ({r.level})")
         for f in r.findings:
             print(f"  - {f.kind} (+{f.weight}): {f.excerpt}")
+    elif a.cmd == "realdata":
+        from .realdata import main as realdata
+
+        print(json.dumps(realdata(a.gandalf, a.deepset, a.agentdojo, a.out), indent=2))
     elif a.cmd == "serve":
         import uvicorn
 

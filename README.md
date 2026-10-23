@@ -55,11 +55,45 @@ Normal tasks that are held are the ones a bank would want confirmed anyway: rent
 
 `python -m agentfw bench --live` runs the same scenarios through a real Claude assistant instead of fixed traces (needs `ANTHROPIC_API_KEY`).
 
+### On public benchmarks and real attack text
+
+`python -m agentfw realdata` runs two outside tests. Results are in `results/real_data.json`.
+
+**AgentDojo banking suite** ([ETH Zurich, NeurIPS 2024](https://github.com/ethz-spylab/agentdojo), MIT). The attacker's instructions are planted in bills, landlord notices, an address-change letter and the subject of an incoming transfer. Each of the 9 attacks is replayed as a fully compromised assistant making exactly the attacker's tool calls. The 16 normal tasks are replayed with their correct calls and no attack. AgentDojo's `send_money` and scheduled transfers map onto this firewall's payees and transfers (see `agentfw/agentdojo.py`).
+
+| | Without firewall | With firewall |
+|---|---|---|
+| Attacks that move money, leak data or change the password | 9 / 9 succeed | **0 / 9** (all refused) |
+| Normal tasks that only read | 4 / 4 done | 4 / 4 done |
+| Normal tasks that move money | 10 / 10 done | 8 wait for one customer confirmation, 2 refused |
+
+The two refusals:
+- **Paying a bill whose account number appears only in the bill file.** This is deliberate: a new payee's account must come from the customer.
+- **A task that needs a profile-update tool this firewall doesn't expose.**
+
+Most of the confirmations are for amounts the assistant worked out itself (a 10% price rise, a refund difference) rather than amounts the customer typed.
+
+**The injection detector on text written by people:**
+- [Lakera Gandalf](https://huggingface.co/datasets/Lakera/gandalf_ignore_instructions): 1,000 real attempts to make an LLM give up a password.
+- [deepset/prompt-injections](https://huggingface.co/datasets/deepset/prompt-injections): 662 prompts labelled injection or benign.
+
+| Flagged as suspicious or worse | Before | After broadening the patterns on Gandalf's train split |
+|---|---|---|
+| Gandalf test split (held out) | 48% | **67%** |
+| Gandalf validation split (held out) | 41% | 63% |
+| deepset injections (held out) | 9% | 16% |
+| deepset benign prompts (false alarms) | 0.5% | 0.5% |
+
+The detector catches well under half of the deepset injections. Many of them are role-play or task-switching requests ("act as an interviewer"), not commands aimed at a banking tool. That is why the detector is only a second line of defence: the AgentDojo attacks were stopped by the provenance rules, whatever the detector scored.
+
+The real data also exposed a bug: an IBAN the customer typed was not recognised as theirs if its bank code contained letters (`GB29 NWBK 6016…`), because accounts were compared as digits only. IBANs are now matched whole, in compact or four-character groups.
+
 ## Run it
 
 ```bash
 pip install -r requirements.txt
-python -m pytest -q                 # 9 tests
+python -m pytest -q                 # 13 tests
+python -m agentfw realdata --gandalf DIR --deepset DIR --agentdojo agentdojo_banking.json
 python -m agentfw bench             # attack/utility benchmark
 python -m agentfw serve             # console on http://127.0.0.1:8004
 python -m agentfw chat "Please pay the Acme Interiors invoice INV-2291 in my documents."
@@ -96,7 +130,7 @@ To wire it to real systems, implement the same eight methods (`get_balance`, `li
 ```
 agentfw/
   bank.py        sandbox core-banking API + tool schemas
-  provenance.py  labels, value extraction (accounts, ₹ amounts incl. lakh/k, names), confusable skeletons
+  provenance.py  labels, value extraction (accounts incl. IBANs, ₹ amounts incl. lakh/k, names), confusable skeletons
   detector.py    injection scanner and neutraliser
   policy.py      ALLOW / APPROVE / DENY rules
   approval.py    call-bound, single-use approvals
@@ -104,6 +138,8 @@ agentfw/
   gateway.py     mediation layer
   agent.py       Claude assistant (manual tool loop) and trace replayer
   bench.py       15 attacks + 10 benign tasks
+  agentdojo.py   replay of the AgentDojo banking suite (agentdojo_export.py makes its JSON)
+  realdata.py    detector on real injection prompts + the AgentDojo run
   server.py      FastAPI console backend
 web/console.html
 policy.toml

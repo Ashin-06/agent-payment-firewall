@@ -78,7 +78,7 @@ class PolicyEngine:
             elif not (self._user_asked_to_pay_a_document(ctx) and amount <= self.p["untrusted"]["auto_pay_document_amount_max"]):
                 v.raise_to(Action.APPROVE, f"amount ₹{amount:,.0f} was taken from a document, not confirmed by the customer")
             return
-        v.raise_to(Action.APPROVE, f"amount ₹{amount:,.0f} does not appear anywhere the customer or bank provided")
+        v.raise_to(Action.APPROVE, f"amount ₹{amount:,.0f} was not given by the customer")
 
     def _check_limits(self, v: Verdict, bank: Bank, amount: float) -> None:
         lim = self.p["limits"]
