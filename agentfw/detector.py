@@ -15,7 +15,14 @@ BIDI = re.compile("[‪-‮⁦-⁩]")
 TAG_BLOCK = re.compile("[\U000e0000-\U000e007f]+")
 
 PATTERNS: list[tuple[str, float, re.Pattern]] = [
-    ("instruction override", 3.0, re.compile(r"\b(ignore|disregard|forget|override)\b.{0,40}\b(previous|prior|above|earlier|all|system)\b.{0,20}\b(instructions?|rules?|prompts?|polic(y|ies))", re.I | re.S)),
+    ("instruction override", 3.0, re.compile(
+        r"\b(ignore|disregard|forget|override|bypass)\b.{0,40}"
+        r"(\b(previous|prior|above|earlier|older|original|all|any|your|the|system)\b.{0,20}"
+        r"\b(instructions?|instructed|directives?|directions|rules?|prompts?|polic(y|ies)|guidelines?|commands?|messages|restrictions?|constraints?)\b"
+        r"|\beverything\b.{0,25}\b(told|above|before|instructed|said)\b)", re.I | re.S)),
+    ("prompt leaking", 2.0, re.compile(
+        r"\b(reveal|disclose|print|show|repeat|recite|list|output|tell me|what (are|were|is))\b.{0,30}"
+        r"\b(your|the|my|all|previous|prior|original|initial|system|last)\b.{0,20}\b(instructions?|prompt|directives?|guidelines)\b", re.I | re.S)),
     ("role hijack", 2.5, re.compile(r"\b(you are now|act as|new instructions?|system prompt|developer mode|as an ai)\b", re.I)),
     ("fake chat/system markup", 2.5, re.compile(r"(<\s*/?\s*(system|assistant|instructions?|admin)\s*>|^\s*(system|assistant)\s*:|\[\s*(system|inst)\s*\])", re.I | re.M)),
     ("payment imperative", 2.0, re.compile(r"\b(transfer|send|wire|remit|pay)\b.{0,40}(₹|rs\.?|inr|\d[\d,]{3,}).{0,60}\b(to|into)\b.{0,30}(account|a/c|beneficiary|payee|\d{9,})", re.I | re.S)),
