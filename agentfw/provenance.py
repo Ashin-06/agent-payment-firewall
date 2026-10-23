@@ -29,6 +29,8 @@ class Span:
 
 
 ACCOUNT_RE = re.compile(r"\d[\d \-]{6,22}\d")
+# IBANs carry letters in the bank code (GB29 NWBK 6016...), so they are compared whole, not as digits
+IBAN_RE = re.compile(r"\b[A-Z]{2}\d{2}(?:[A-Z0-9]{10,30}|(?: [A-Z0-9]{4}){2,7}(?: [A-Z0-9]{1,4})?)\b")  # compact or in fours
 AMOUNT_RE = re.compile(r"(?:₹|rs\.?|inr)?\s*(\d{1,3}(?:,\d{2,3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*(k|l|lakh|lakhs)?\b", re.I)
 
 # Latin look-alikes from Cyrillic and Greek, enough to catch payee-name spoofing
@@ -44,8 +46,14 @@ def skeleton(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", s).strip()
 
 
+def normalise_account(acct: str) -> str:
+    s = re.sub(r"[\s-]", "", str(acct)).upper()
+    return s if IBAN_RE.fullmatch(s) else re.sub(r"\D", "", s)
+
+
 def accounts_in(text: str) -> set[str]:
-    return {re.sub(r"\D", "", m) for m in ACCOUNT_RE.findall(text) if len(re.sub(r"\D", "", m)) >= 8}
+    found = {re.sub(r"\D", "", m) for m in ACCOUNT_RE.findall(text) if len(re.sub(r"\D", "", m)) >= 8}
+    return found | {m.group(0).replace(" ", "") for m in IBAN_RE.finditer(text)}
 
 
 def amounts_in(text: str) -> set[float]:
@@ -76,7 +84,7 @@ class Context:
         return [s for s in self.spans if pred(s)]
 
     def origins_of_account(self, acct: str) -> list[Span]:
-        a = re.sub(r"\D", "", str(acct))
+        a = normalise_account(acct)
         return self._match(lambda s: a in accounts_in(s.text))
 
     def origins_of_amount(self, amount: float) -> list[Span]:
