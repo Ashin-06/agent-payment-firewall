@@ -63,11 +63,11 @@ class Gateway:
         return self._execute(tool, args, verdict)
 
     def execute_approved(self, approval_id: str) -> Outcome:
-        p = self.approvals.items[approval_id]
+        p = self.approvals.get(approval_id)
+        if p is None:
+            raise KeyError(approval_id)
         self.approvals.consume(approval_id, p.tool, p.args)
-        out = self._execute(p.tool, p.args, Verdict(Action.ALLOW, [f"approved by {p.decided_by}"]))
-        p.result = out.raw if isinstance(out.raw, dict) else {"output": out.output}
-        return out
+        return self._execute(p.tool, p.args, Verdict(Action.ALLOW, [f"approved by {p.decided_by}"]))
 
     def _execute(self, tool: str, args: dict, verdict: Verdict) -> Outcome:
         try:

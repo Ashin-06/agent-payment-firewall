@@ -4,12 +4,14 @@
     python -m agentfw chat "Pay the Acme invoice inv-2291" [--no-firewall]
     python -m agentfw scan path/to/email.txt
     python -m agentfw realdata --gandalf DIR --deepset DIR --agentdojo agentdojo_banking.json
-    python -m agentfw serve --port 8004
+    python -m agentfw serve                        # console (settings: AGENTFW_* env)
+    python -m agentfw migrate                      # apply database migrations and exit
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -39,8 +41,9 @@ def main(argv=None):
     r.add_argument("--agentdojo", help="JSON from python -m agentfw.agentdojo_export")
     r.add_argument("--out", default="results/real_data.json")
     v = sub.add_parser("serve")
-    v.add_argument("--port", type=int, default=8004)
-    v.add_argument("--host", default="127.0.0.1")
+    v.add_argument("--port", type=int, help="default AGENTFW_PORT or 8004")
+    v.add_argument("--host", help="default AGENTFW_HOST or 127.0.0.1; any other address needs API keys")
+    sub.add_parser("migrate", help="apply database migrations to AGENTFW_DATABASE_URL")
     a = ap.parse_args(argv)
 
     if a.cmd == "bench":
@@ -82,10 +85,27 @@ def main(argv=None):
         from .realdata import main as realdata
 
         print(json.dumps(realdata(a.gandalf, a.deepset, a.agentdojo, a.out), indent=2))
+    elif a.cmd == "migrate":
+        from . import db, ops
+
+        applied = db.migrate(db.engine(ops.load_settings().database_url))
+        print(*(applied or ["up to date"]), sep="\n")
     elif a.cmd == "serve":
         import uvicorn
 
-        uvicorn.run("agentfw.server:app", host=a.host, port=a.port)
+        from . import ops
+
+        for name, val in (("HOST", a.host), ("PORT", a.port)):
+            if val is not None:
+                os.environ[f"AGENTFW_{name}"] = str(val)
+        try:
+            settings = ops.load_settings()  # fail here, before uvicorn, with a readable message
+        except ops.ConfigError as e:
+            sys.exit(f"configuration error: {e}")
+        if settings.production and not os.environ.get("ANTHROPIC_API_KEY"):
+            sys.exit("configuration error: production needs ANTHROPIC_API_KEY for the assistant")
+        ops.setup_logging(settings.log_level)
+        uvicorn.run("agentfw.server:app", host=settings.host, port=settings.port, log_config=None, access_log=False)
 
 
 if __name__ == "__main__":

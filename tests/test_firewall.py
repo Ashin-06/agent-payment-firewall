@@ -2,7 +2,9 @@ import json
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 
+from agentfw import db
 from agentfw.approval import ApprovalQueue
 from agentfw.audit import AuditLog
 from agentfw.bank import Bank
@@ -44,20 +46,20 @@ def test_approval_is_bound_to_exact_call():
 
 
 def test_audit_chain_detects_tampering(tmp_path):
-    log = AuditLog(tmp_path / "a.jsonl", key=b"k")
+    eng = db.connect(f"sqlite:///{tmp_path / 'a.db'}")
+    log = AuditLog(eng, key=b"k")
     for i in range(5):
         log.append("executed", n=i)
     assert log.verify()[0]
-    lines = (tmp_path / "a.jsonl").read_text().splitlines()
-    e = json.loads(lines[2])
-    e["n"] = 999
-    lines[2] = json.dumps(e)
-    (tmp_path / "a.jsonl").write_text("\n".join(lines) + "\n")
-    ok, msg = AuditLog(tmp_path / "a.jsonl", key=b"k").verify()
+    with eng.begin() as c:
+        e = json.loads(c.execute(text("SELECT entry FROM audit_log WHERE seq = 2")).scalar_one())
+        e["n"] = 999
+        c.execute(text("UPDATE audit_log SET entry = :e WHERE seq = 2"), {"e": json.dumps(e)})
+    ok, msg = AuditLog(eng, key=b"k").verify()
     assert not ok and "entry 2" in msg
-    del lines[3]
-    (tmp_path / "a.jsonl").write_text("\n".join(lines) + "\n")
-    assert not AuditLog(tmp_path / "a.jsonl", key=b"k").verify()[0]
+    with eng.begin() as c:
+        c.execute(text("DELETE FROM audit_log WHERE seq = 3"))
+    assert not AuditLog(eng, key=b"k").verify()[0]
 
 
 def test_detector_reveals_hidden_text():

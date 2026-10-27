@@ -66,10 +66,19 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const inr = (n) => "₹" + Number(n).toLocaleString("en-IN");
 
+async function api(path, opts = {}) {  // sends the API key, asking for it once if the service has keys
+  const send = () => fetch(path, { ...opts, headers: { ...(opts.headers || {}), ...(sessionStorage.getItem("apiKey") ? { "x-api-key": sessionStorage.getItem("apiKey") } : {}) } });
+  let r = await send();
+  if (r.status === 401) { sessionStorage.setItem("apiKey", prompt("API key for this console") || ""); r = await send(); }
+  return r;
+}
+
 function add(cls, html) { const d = document.createElement("div"); d.className = cls; d.innerHTML = html; $("log").append(d); $("log").scrollTop = 1e9; }
 
 async function refresh() {
-  const s = await (await fetch("/api/state")).json();
+  const sr = await api("/api/state");
+  const s = await sr.json();
+  if (!sr.ok) { $("pending").innerHTML = `<p class="reason">${esc(s.detail)}</p>`; return; }
   $("enforce").checked = s.enforce;
   $("pending").innerHTML = s.pending.length ? s.pending.map((p) => `
     <div class="pending"><div><code>${esc(p.tool)}</code> ${esc(JSON.stringify(p.args))}</div>
@@ -79,7 +88,9 @@ async function refresh() {
   $("account").innerHTML = `<p><strong>${inr(s.balance.balance)}</strong> available</p>
     <table><tr><th>Payee</th><th>Account</th></tr>${s.payees.map((p) => `<tr><td>${esc(p.name)}</td><td>${esc(p.account_number)}</td></tr>`).join("")}</table>
     <table style="margin-top:10px"><tr><th>Recent</th><th>Amount</th></tr>${s.ledger.slice(0, 6).map((t) => `<tr><td>${esc(t.counterparty)}</td><td>${t.kind === "credit" ? "+" : "−"}${inr(t.amount)}</td></tr>`).join("")}</table>`;
-  const a = await (await fetch("/api/audit")).json();
+  const ar = await api("/api/audit");
+  const a = await ar.json();
+  if (!ar.ok) { $("chain").innerHTML = ""; $("audit").innerHTML = `<p class="reason">${esc(a.detail)}</p>`; return; }
   $("chain").innerHTML = a.verified ? '<span class="chain-ok">· chain intact</span>' : '<span class="chain-bad">· ' + esc(a.message) + "</span>";
   $("audit").innerHTML = a.entries.slice().reverse().map((e) => `<div>#${e.seq} <b>${esc(e.event)}</b> ${esc(e.tool || "")} ${esc((e.reasons || []).join(" "))}</div>`).join("");
 }
@@ -87,7 +98,7 @@ async function refresh() {
 $("pending").addEventListener("click", async (ev) => {
   const b = ev.target.closest("button[data-id]");
   if (!b) return;
-  const r = await fetch(`/api/approvals/${b.dataset.id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ approve: b.dataset.ok === "1" }) });
+  const r = await api(`/api/approvals/${b.dataset.id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ approve: b.dataset.ok === "1" }) });
   const body = await r.json();
   add("step", `approval ${esc(b.dataset.id)}: <b class="${r.ok ? body.status : "error"}">${esc(r.ok ? body.status : body.detail)}</b>`);
   refresh();
@@ -99,7 +110,7 @@ $("chat").addEventListener("submit", async (ev) => {
   if (!text) return;
   $("input").value = "";
   add("msg me", esc(text));
-  const r = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: text }) });
+  const r = await api("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: text }) });
   const body = await r.json();
   if (!r.ok) { add("msg bot", esc(body.detail)); return; }
   for (const s of body.steps) add("step", `${esc(s.tool)} ${esc(JSON.stringify(s.args))} → <b class="${s.status}">${s.status}</b>`);
@@ -108,7 +119,8 @@ $("chat").addEventListener("submit", async (ev) => {
 });
 
 async function doReset() {
-  await fetch("/api/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enforce: $("enforce").checked }) });
+  const r = await api("/api/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enforce: $("enforce").checked }) });
+  if (!r.ok) { add("msg bot", esc((await r.json()).detail)); refresh(); return; }
   $("log").innerHTML = "";
   refresh();
 }
