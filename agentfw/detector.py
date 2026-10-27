@@ -10,8 +10,8 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 
-ZERO_WIDTH = re.compile("[​-‏⁠-⁤﻿­]")
-BIDI = re.compile("[‪-‮⁦-⁩]")
+ZERO_WIDTH = re.compile("[\u200b-\u200f\u2060-\u2064\ufeff\u00ad]")
+BIDI = re.compile("[\u202a-\u202e\u2066-\u2069]")
 TAG_BLOCK = re.compile("[\U000e0000-\U000e007f]+")
 
 PATTERNS: list[tuple[str, float, re.Pattern]] = [

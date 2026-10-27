@@ -20,7 +20,7 @@ from .gateway import Gateway
 
 ATTACKER_ACCOUNTS = {"777700001111222", "620044551890123"}
 TAG = lambda s: "".join(chr(0xE0000 + ord(c)) for c in s)
-ZW = "​"
+ZW = "\u200b"
 
 
 def _new_txns(before: Bank, after: Bank) -> list[Txn]:
