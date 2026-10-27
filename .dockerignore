@@ -1,0 +1,6 @@
+*
+!agentfw
+!web
+!policy.toml
+!requirements.lock
+**/__pycache__
