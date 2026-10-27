@@ -19,8 +19,8 @@ Every tool call passes through `Gateway.call()`:
 | **Limits** | Per-payment ceiling, daily total, payments-per-hour velocity, structuring detection (several payments just under the confirmation threshold), new-payee cooling-off period, quiet hours, and lookups against the customer's registered biller consumer numbers. |
 | **Memo exfiltration** | Memos and references carrying OTPs, PINs, passwords, account or card numbers are refused. |
 | **Look-alike payees** | A payee whose name normalises to an existing payee but has a different account (Cyrillic `А`, `0` for `O`) is refused. |
-| **Approvals** | Held calls go to a queue. An approval is bound to a SHA-256 of the exact tool name and arguments and can be used once, so an agent cannot swap the amount after the customer says yes. |
-| **Audit** | Every read, decision and execution goes into a hash-chained, optionally HMAC-keyed log. Editing, deleting or reordering an entry breaks verification. |
+| **Approvals** | Held calls go to a queue in the database, so they survive a restart and can be approved on any replica. An approval is bound to a SHA-256 of the exact tool name and arguments and can be used once, so an agent cannot swap the amount after the customer says yes. |
+| **Audit** | Every read, decision and execution goes into a hash-chained, HMAC-keyed log in the database. Editing, deleting or reordering an entry breaks verification. |
 
 Policy lives in [`policy.toml`](policy.toml): limits, thresholds, cooling-off period and blocked memo words. It can be changed without touching code.
 
@@ -92,10 +92,10 @@ The real data also exposed a bug: an IBAN the customer typed was not recognised 
 
 ```bash
 pip install -r requirements.txt
-python -m pytest -q                 # 13 tests
+python -m pytest -q                 # 40 tests
 python -m agentfw realdata --gandalf DIR --deepset DIR --agentdojo agentdojo_banking.json
 python -m agentfw bench             # attack/utility benchmark
-python -m agentfw serve             # console on http://127.0.0.1:8004
+python -m agentfw serve             # console on http://127.0.0.1:8004 (demo mode, no keys)
 python -m agentfw chat "Please pay the Acme Interiors invoice INV-2291 in my documents."
 python -m agentfw scan suspicious_email.txt
 ```
@@ -107,7 +107,17 @@ The console has three panels:
 
 A toggle turns the firewall off, so you can watch the same poisoned documents succeed without it. The poisoned documents from the benchmark are preloaded.
 
-The assistant uses `claude-opus-5-5` through a manual tool-use loop, so every call is routed through the gateway. Server-side refusal fallbacks are enabled (`fallbacks: "default"`). Set `AGENTFW_MODEL` to use another model, and `AGENTFW_AUDIT_KEY` to HMAC-sign the audit chain.
+The assistant uses `claude-opus-5-5` through a manual tool-use loop, so every call is routed through the gateway. Server-side refusal fallbacks are enabled (`fallbacks: "default"`). Set `AGENTFW_MODEL` to use another model.
+
+Settings come from `AGENTFW_*` environment variables (full table in [docs/runbook.md](docs/runbook.md)). `AGENTFW_AUDIT_KEY` (base64, 32 bytes or more) signs the audit chain; held approvals and the chain live in `AGENTFW_DATABASE_URL` (SQLite or Postgres). With API keys configured each call needs `x-api-key` (or `Authorization: Bearer`), and the key's role decides what it may do: `customer` chats and approves held payments, `auditor` reads `/api/audit`, `monitor` reads `/metrics`, `admin` does all of that and may reset the demo account. The console asks for a key once and keeps it for the browser tab. `AGENTFW_ENV=production` refuses to start without hashed keys, the audit key, a database and `ANTHROPIC_API_KEY`, and turns the reset (which can switch the firewall off) into a 403.
+
+In a container (production mode; see the runbook):
+
+```bash
+docker build -t agent-payment-firewall:1.0.0 .
+python -m agentfw.ops keygen        # an API key with its hash, and an audit key
+docker run -p 8004:8004 -v agentfw-data:/data -e AGENTFW_KEYS_FILE=/run/secrets/agentfw-keys.json -e AGENTFW_AUDIT_KEY=... -e ANTHROPIC_API_KEY=... agent-payment-firewall:1.0.0
+```
 
 ## Using it with your own agent
 
@@ -133,8 +143,10 @@ agentfw/
   provenance.py  labels, value extraction (accounts incl. IBANs, ₹ amounts incl. lakh/k, names), confusable skeletons
   detector.py    injection scanner and neutraliser
   policy.py      ALLOW / APPROVE / DENY rules
-  approval.py    call-bound, single-use approvals
-  audit.py       hash-chained audit log
+  approval.py    call-bound, single-use approvals (database)
+  audit.py       hash-chained audit log (database)
+  ops.py         settings, API keys and roles, limits, logs, metrics, health
+  db.py          SQLite/Postgres engine and migrations (migrations/*.sql)
   gateway.py     mediation layer
   agent.py       Claude assistant (manual tool loop) and trace replayer
   bench.py       15 attacks + 10 benign tasks
@@ -149,4 +161,22 @@ policy.toml
 
 - Provenance matching works on values (account numbers, amounts, names). An attacker who gets the *customer* to type their account number, for example over a phone call, defeats it. That is social engineering of the human, outside this layer.
 - If the customer's own message contains an attacker's account number pasted from somewhere, it is trusted. The cooling-off and amount limits still apply.
+- The console drives one demo account (`Bank.demo()`, in memory) and one conversation shared by every `customer` key. Approvals and the audit chain are durable; the account and the conversation's provenance labels are not. A real deployment needs a session per signed-in customer and the bank's own payment APIs behind the eight tool methods.
 - The scanner is heuristic and will miss novel phrasing. The design does not depend on it: the destination rule holds even when the scanner finds nothing (A02 has no trigger words at all).
+
+## Production readiness
+
+**In place** (see [docs/runbook.md](docs/runbook.md) and [docs/threat-model.md](docs/threat-model.md)):
+- Pinned dependencies (`requirements.lock`), `pyproject.toml`, a container image that runs as a non-root user with a health check, and CI (ruff, bandit, pip-audit, tests with coverage).
+- Production mode that refuses to start without hashed per-client API keys, an audit key, a database and Anthropic credentials. No secret has a default, and the console won't listen publicly without keys.
+- Roles on keys (the approver recorded is the key's user), per-client rate limits, a body size cap, security headers, CORS only for listed origins, errors that don't echo input, and the demo reset refused in production.
+- Approvals and the audit chain in SQLite or Postgres, with numbered migrations, race-safe state changes across replicas and audit-key rotation.
+- JSON logs with request IDs, `/healthz`, `/readyz` and Prometheus metrics.
+
+**Still needed before it moves real money**, none of which code can supply:
+- An independent security review and penetration test, including adaptive prompt-injection red-teaming against a live assistant. Nobody outside this project has reviewed it.
+- Validation on the bank's own assistant traffic. The benchmark replays scripted attacks; AgentDojo is 9 attacks and 16 tasks; the detector catches 16% of deepset's injections.
+- RBI and DPDP Act 2023 sign-off on an LLM assistant initiating payments, the approval flow (RBI's additional factor of authentication for digital payments) and on sending customer data to an external model provider.
+- Real integrations: the bank's core-banking and payment rails (UPI, IMPS, NEFT) behind the tool methods, per-customer sessions from the bank's identity provider, and approvals confirmed in the bank's app with device binding instead of a console button.
+- The audit key in an HSM or a KMS rather than an environment variable.
+- TLS and a shared rate limiter at the ingress; an on-call team with SLOs and alerting on the metrics above.
