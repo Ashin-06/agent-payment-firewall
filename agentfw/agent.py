@@ -1,6 +1,6 @@
 """Agents that drive the gateway.
 
-ClaudeAgent  - a real banking assistant on the Claude API. Every tool call it makes goes
+LLMAgent     - a real banking assistant on the Anthropic Messages API. Every tool call it makes goes
                through the gateway; it never touches the bank directly.
 TraceAgent   - replays a fixed sequence of tool calls. Used by the benchmark to model a
                fully compromised assistant: one that obeys every instruction it reads.
@@ -69,7 +69,7 @@ class TraceAgent:
         return AgentResult("(trace replay)", steps)
 
 
-class ClaudeAgent:
+class LLMAgent:
     def __init__(self, gateway: Gateway, client=None, model: str = MODEL, max_turns: int = 12, effort: str = "medium"):
         import anthropic
 

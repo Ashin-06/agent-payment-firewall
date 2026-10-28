@@ -3,5 +3,4 @@ __pycache__/
 .pytest_cache/
 .venv/
 *.jsonl
-.claude/
 .coverage

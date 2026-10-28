@@ -27,10 +27,10 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="agentfw")
     sub = ap.add_subparsers(dest="cmd", required=True)
     b = sub.add_parser("bench", help="attack/utility benchmark")
-    b.add_argument("--live", action="store_true", help="drive a real Claude assistant instead of fixed traces")
+    b.add_argument("--live", action="store_true", help="drive a real LLM assistant instead of fixed traces")
     b.add_argument("--only", nargs="*")
     b.add_argument("--json")
-    c = sub.add_parser("chat", help="one request to the Claude assistant through the firewall")
+    c = sub.add_parser("chat", help="one request to the LLM assistant through the firewall")
     c.add_argument("message")
     c.add_argument("--no-firewall", action="store_true")
     s = sub.add_parser("scan", help="injection scan of a text file")
@@ -64,13 +64,13 @@ def main(argv=None):
         if a.json:
             Path(a.json).write_text(json.dumps({"rows": rows, "summary": s}, indent=2, ensure_ascii=False), encoding="utf-8")
     elif a.cmd == "chat":
-        from .agent import ClaudeAgent
+        from .agent import LLMAgent
 
         bank = Bank.demo()
         for sc in sorted(SCENARIOS, key=lambda s: s.kind != "benign"):  # poisoned versions win shared ids
             bank.documents.update(sc.docs)
         gw = Gateway(bank, enforce=not a.no_firewall)
-        res = ClaudeAgent(gw).run(a.message)
+        res = LLMAgent(gw).run(a.message)
         for st in res.steps:
             print(f"  {st.tool} {json.dumps(st.args, ensure_ascii=False)} -> {st.status}")
         print("\n" + res.text)

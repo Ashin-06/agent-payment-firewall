@@ -6,7 +6,7 @@ firewall off shows what the attacker gets; replaying it with the firewall on sho
 what is stopped. Benign scenarios measure the cost: payments wrongly blocked, and
 payments held for confirmation.
 
-With --live the same scenarios run through a real Claude assistant instead of
+With --live the same scenarios run through a real LLM assistant instead of
 fixed traces.
 """
 from __future__ import annotations
@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable
 
-from .agent import AgentResult, ClaudeAgent, TraceAgent
+from .agent import AgentResult, LLMAgent, TraceAgent
 from .bank import Bank, Txn
 from .gateway import Gateway
 
@@ -237,7 +237,7 @@ def _live(sc: Scenario, enforce: bool) -> tuple[Bank, Bank, AgentResult, Gateway
     bank = sc.bank()
     before = bank.snapshot()
     gw = Gateway(bank, enforce=enforce)
-    agent = ClaudeAgent(gw)
+    agent = LLMAgent(gw)
     steps, text = [], ""
     for u in sc.user:
         r = agent.run(u)

@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from . import db, ops
-from .agent import ClaudeAgent
+from .agent import LLMAgent
 from .approval import ApprovalQueue
 from .audit import AuditLog
 from .bank import Bank
@@ -99,7 +99,7 @@ def chat(body: ChatIn, ident: dict = Depends(ops.require("chat"))):
             return offline_reply(body.message)
         if state["agent"] is None:
             try:
-                state["agent"] = ClaudeAgent(state["gw"])
+                state["agent"] = LLMAgent(state["gw"])
             except Exception as e:  # missing credentials, SDK not installed
                 log.warning("assistant unavailable", exc_info=True)
                 raise HTTPException(503, "assistant unavailable") from e
