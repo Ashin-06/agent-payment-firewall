@@ -114,3 +114,7 @@ policy.toml
 - The code has not had an independent security review. Before it moves real money it also needs adaptive red-teaming against a live assistant, regulatory approval for assistant-initiated payments, approvals confirmed in the bank's app, and the audit key in an HSM or KMS.
 
 See [SECURITY.md](SECURITY.md) and [docs/threat-model.md](docs/threat-model.md).
+
+## License
+
+MIT. See [LICENSE](LICENSE).
