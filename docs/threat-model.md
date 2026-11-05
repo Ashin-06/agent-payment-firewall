@@ -1,6 +1,6 @@
 # Threat model
 
-What the firewall protects, from whom, and what is still open. Written for the 1.0.0 code; it
+What the firewall protects, from whom, and what is still open. Written for the 1.1.0 code; it
 has not been reviewed by anyone independent.
 
 ## What it protects
@@ -12,7 +12,7 @@ has not been reviewed by anyone independent.
 | Audit trail of every read, decision, approval and execution | `audit_log` table, HMAC chain |
 | Audit key | environment / secret store (`AGENTFW_AUDIT_KEY`) |
 | Console API keys | callers hold the key; the service holds only SHA-256 hashes |
-| Anthropic credentials | `ANTHROPIC_API_KEY` on the service host only |
+| Provider credentials | `GOOGLE_API_KEY` or `ANTHROPIC_API_KEY` on the service host only; sent in a header, never a URL |
 | What the customer typed (the provenance source of truth) | conversation context in memory; customer messages also in the audit trail |
 
 ## Trust boundaries
@@ -36,9 +36,16 @@ documents, emails, statement memos (third parties) ──────┘        
 
 | Threat | Mitigation | Residual risk |
 |---|---|---|
-| Injected instruction redirects a payment to the attacker | Provenance rule: a new payee's account must come from the customer; values from hostile content are refused | Social engineering of the customer (they type the attacker's account themselves) defeats it, as does a pasted account in their own message |
-| Injected or inflated amount | Amounts must come from the customer, or from a bill they asked to pay up to a limit; otherwise held | The customer may approve a held payment without reading it |
-| Data exfiltration through memos or markdown beacons | Memo rule (OTPs, PINs, account and card numbers), beacons defused before the model sees them | Other side channels in free text the model writes back to the customer |
+| Injected instruction redirects a payment to the attacker | Provenance rule: a new payee's account must have been typed by the customer, otherwise refused outright, with no approval possible | Social engineering of the customer (they type the attacker's account themselves) defeats it. Pasted text is only caught when it looks pasted |
+| A mention, question, refusal or old request turned into a payment | Mandates: a payment must match a plain request for this payee at this amount, not yet used, not cancelled, under 30 minutes old | A customer's plain request for a saved payee is honoured once, even if an attacker prompted them to make it |
+| One request spent many times, or amounts swapped between payees | Mandates are single-use and pair amounts with payees within a sentence | Unusual sentence structures can pair wrongly within one sentence; the amount and payee were both still typed there |
+| Injected or inflated amount | Amounts must be asked for, or come from a bill the customer asked to pay for that payee up to ₹10,000; otherwise held | A poisoned bill can inflate within ₹10,000. The customer may approve a held payment without reading it |
+| Data exfiltration through memos or beacons | Memo rule on canonical text (OTPs, PINs, account and card numbers, long numbers, encoded text the customer didn't type); images, active HTML and URL queries removed from what the model reads and writes | Short secrets in plain words, and the amount field as a covert channel |
+| Malformed or hostile arguments | Strict schema check before any rule; digits and text made canonical; failures refused | — |
+| Bank timeout followed by a retry | Unknown outcome freezes money until a person reconciles | The freeze is per process, in memory. A real adapter should also pass idempotency keys |
+| Payment with no record | Audit written before the bank is called; if that fails nothing is sent; if the record after fails, money freezes | A crash between the bank call and the second record leaves an `executing` entry with no result, which reconciliation should look for |
+| Assistant keeps trying after being refused | Stops after 5 refused or held calls until the customer speaks; at most 5 open approvals | Per conversation, in memory |
+| Approving something other than what is shown | The approver sees the resolved recipient, bound to the approval and compared again at execution; hard limits rechecked | A careless approver can still pay saved payees up to the daily ceiling |
 | Look-alike payees | Confusable skeletons compared with saved payees | Only names the skeleton table covers |
 | Approval reused or swapped | Approval bound to tool + canonical arguments, single use, 15-minute expiry; conditional UPDATEs so two replicas can't both approve or execute | A stolen `customer` key can approve anything held |
 | Structuring and velocity abuse | Per-payment, daily, per-hour and just-under-threshold limits | Limits are computed on the demo account's ledger; the real ledger must back them |
@@ -48,7 +55,7 @@ documents, emails, statement memos (third parties) ──────┘        
 | One customer acting on another's account | — | **Not handled**: the console drives one shared demo account. Per-customer sessions from the bank's identity provider are required |
 | Oversized or flooding requests | 64 KB body cap, 4,000-character messages, per-client token bucket, at most 12 model turns per message | Per process; put a shared limiter at the ingress |
 | Errors leak data | Validation errors carry no input; unhandled errors return only a request ID; SDK errors are logged, not returned | — |
-| Misconfigured production start | `AGENTFW_ENV=production` refuses to start without keys, audit key, database and Anthropic credentials; no public bind without keys | Production mode can't check that keys are *good*, only present |
+| Misconfigured production start | `AGENTFW_ENV=production` refuses to start without keys, audit key, database and provider credentials; no public bind without keys | Production mode can't check that keys are *good*, only present |
 
 ## Not covered
 
@@ -56,5 +63,7 @@ documents, emails, statement memos (third parties) ──────┘        
 - The model provider's handling of what the assistant sends it (customer messages, documents).
 - Strong customer authentication for approvals (device binding, an additional factor); the
   console's approve button stands in for the bank app's confirmation screen.
-- Durable conversation state: provenance labels are per process, so a restart forgets what the
-  customer typed earlier in a conversation (the safe direction: more calls are held or refused).
+- Durable conversation state: provenance labels and mandates are per process, so a restart forgets what the
+  customer asked for (the safe direction: more calls are held or refused). The same restart also clears a freeze;
+  see the runbook.
+- Languages other than English: the mandate rules don't read them, so every such payment waits for a confirmation.

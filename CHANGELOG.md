@@ -2,6 +2,42 @@
 
 All notable changes to this project. Versions follow [semantic versioning](https://semver.org/).
 
+## 1.1.0 — 2026-11-05
+
+Version 1.0.0 stopped all of its own attacks, but 34 of 35 new exploits written against it worked.
+Details in [docs/case-study.md](docs/case-study.md).
+
+### Added
+- Mandates (`agentfw/mandate.py`): customer messages are parsed by fixed rules into single-use authority
+  for a payee, an amount and a number of times. Questions, reports, refusals, cancellations, conditions
+  and later dates grant nothing, or need a confirmation.
+- `python -m agentfw redteam`: named exploits, randomized attack sessions checked by an independent oracle
+  with injected faults, an honest-assistant friction measure, a customer who approves everything, and each
+  layer removed in turn. It also runs in CI.
+- 13 more attacks and 12 more normal tasks in the benchmark. It now says how each attack was stopped.
+- AgentDojo evaluated on every task with every attack (144 pairs).
+- Fail-safe behaviour: an unknown bank outcome freezes money until `POST /api/reconcile`; the audit record is
+  written before the bank is called; any internal failure refuses the call; the assistant is stopped after 5
+  refused or held calls; at most 5 open approvals.
+- A Gemini assistant, `list_billers`, `bench --plain-prompt`, and a live benchmark run in `results/`.
+
+### Changed
+- A new payee's account the customer never typed is refused, not held, so no approval can reach it.
+- The IFSC and the payee's name must also come from the customer's request, or the call is held.
+- Approvals show the resolved recipient and are compared with it again at execution. Hard limits are rechecked
+  when an approval runs. Expired requests are no longer offered. Saying "cancel that" withdraws held requests.
+- Payment amounts, statement sender names and every statement memo are now screened or fenced. The fence uses an
+  unguessable tag. Active HTML and URL queries are removed from what the model reads and from its replies.
+- `policy.toml` and the console moved inside the package, so a normal `pip install` works.
+
+### Fixed
+- `NaN`, strings, booleans, fractions of a paisa and malformed arguments reached the rules or the bank; some crashed the gateway.
+- OTPs hidden with zero-width or Cyrillic letters or spaced out, spaced card numbers and encoded account numbers passed the memo check.
+- Quiet hours used the server's timezone, so results differed by where they ran.
+- Invoice numbers such as `INV-2291` counted as amounts; account numbers followed by another number weren't recognised.
+- Two non-Latin payee names were treated as the same name.
+- A failed connection to the assistant would have counted as a stopped attack in `bench --live`.
+
 ## 1.0.0 — 2026-10-27
 
 ### Added

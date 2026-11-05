@@ -14,15 +14,17 @@ disclosing it, and don't test against anyone else's deployment.
 
 | Version | Supported |
 |---|---|
-| 1.0.x | yes |
+| 1.1.x | yes |
+| 1.0.x | no: see the changelog for what it let through |
 | < 1.0 | no (prototype releases) |
 
 ## Scope
 
-In scope: the gateway (policy engine, provenance tracking, injection scanner), the approval
+In scope: the gateway (policy engine, mandate parser, provenance tracking, injection scanner), the approval
 queue, the audit chain, the console API and page, the assistant loop, the container image and
-the CI configuration in this repository. A tool call that moves money to an attacker-chosen
-destination without the customer's confirmation is the most serious class of finding.
+the CI configuration in this repository. A tool call that moves money the customer didn't ask for
+without their confirmation is the most serious class of finding. A sentence the mandate parser
+reads as a request when it isn't one counts.
 
 Out of scope: the demo bank (`agentfw/bank.py`, an in-memory stand-in), the model provider,
 your reverse proxy or TLS setup, and findings that need an already-compromised host or a leaked

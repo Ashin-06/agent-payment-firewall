@@ -5,12 +5,12 @@ How to deploy, configure and operate the firewall console. Commands assume the r
 ## Deploy
 
 ```bash
-docker build -t agent-payment-firewall:1.0.0 .
+docker build -t agent-payment-firewall:1.1.0 .
 python -m agentfw.ops keygen          # one API key per client, plus the audit key
 docker run -d --name agentfw -p 8004:8004 -v agentfw-data:/data \
   -e AGENTFW_KEYS_FILE=/run/secrets/agentfw-keys.json \
   -e AGENTFW_AUDIT_KEY=... -e ANTHROPIC_API_KEY=... \
-  agent-payment-firewall:1.0.0
+  agent-payment-firewall:1.1.0
 curl -fsS http://127.0.0.1:8004/readyz
 ```
 
@@ -32,8 +32,9 @@ Without Docker: `pip install -r requirements.lock && pip install -e .`, then `ag
 | `AGENTFW_API_KEYS` / `AGENTFW_KEYS_FILE` | yes | JSON `{"sha256:<hex>": {"user": "...", "role": "..."}}`. Roles: `customer` (chat, state, approvals), `auditor` (`/api/audit`), `monitor` (`/metrics`), `admin` (all, plus reset outside production) |
 | `AGENTFW_AUDIT_KEY` | yes | base64, at least 32 bytes; HMAC key for the audit chain |
 | `AGENTFW_DATABASE_URL` | yes | `sqlite:////data/agentfw.db` or `postgresql://...` (default in development: in memory) |
-| `ANTHROPIC_API_KEY` | yes | the assistant's credentials; without it (development only) the console can only replay benchmark scenarios |
-| `AGENTFW_MODEL` | — | default `claude-opus-5-5` |
+| `GOOGLE_API_KEY` or `ANTHROPIC_API_KEY` | one of them | the assistant's credentials; without one (development only) the console can only replay benchmark scenarios. Google is used if both are set |
+| `AGENTFW_MODEL` | — | defaults: `gemini-3.5-flash`, `claude-opus-5-5` |
+| `AGENTFW_POLICY` | — | path to a policy file; default is the `policy.toml` inside the package |
 | `AGENTFW_HOST`, `AGENTFW_PORT` | — | default `127.0.0.1:8004`; any non-loopback address needs API keys |
 | `AGENTFW_RATE_LIMIT` | — | requests per minute per client (default 120) |
 | `AGENTFW_MAX_BODY_BYTES` | — | default 64,000 |
@@ -41,20 +42,20 @@ Without Docker: `pip install -r requirements.lock && pip install -e .`, then `ag
 | `AGENTFW_LOG_LEVEL` | — | default `INFO` |
 | `FORWARDED_ALLOW_IPS` | — | addresses of proxies whose `X-Forwarded-For` is trusted (uvicorn) |
 
-Policy limits live in `policy.toml` (copied into the image); change them there and rebuild.
+Policy limits live in `agentfw/policy.toml` (copied into the image); change them there and rebuild, or mount a file and point `AGENTFW_POLICY` at it.
 
 ## Watch
 
 - `GET /healthz`: the process is up (used by the container health check).
 - `GET /readyz`: database reachable; 503 otherwise.
 - `GET /metrics` (role `monitor`): `http_requests_total`, `http_request_duration_seconds`,
-  `errors_total`, `agentfw_decisions_total{decision="executed|held|denied|error|read|user_message|approval_decision"}`.
+  `errors_total`, `agentfw_decisions_total{decision="executing|executed|held|denied|error|outcome_unknown|reconciled|read|user_message|approval_decision"}`.
 - Logs are one JSON object per line on stdout, each with a `request_id` that is also returned in
   the `X-Request-ID` response header.
 - `GET /api/audit` (role `auditor`): the last 200 entries and whether the whole chain verifies.
 
 Suggested alerts: `/readyz` failing for 2 minutes; `errors_total{kind="unhandled"}` increasing;
-5xx share above 1% for 10 minutes; a jump in `decision="denied"` (an attack campaign, or a policy
+5xx share above 1% for 10 minutes; any `decision="outcome_unknown"`; a jump in `decision="denied"` (an attack campaign, or a policy
 change that blocks normal customers); `/api/audit` returning `verified: false`.
 
 ## Rotate keys
@@ -66,7 +67,7 @@ the old hash and restart again.
 new one, then restart. New entries are signed with the new key; old entries still verify. Keep
 old audit keys for as long as you keep the entries they signed.
 
-**Anthropic key.** Replace `ANTHROPIC_API_KEY` and restart.
+**Provider key.** Replace `GOOGLE_API_KEY` or `ANTHROPIC_API_KEY` and restart.
 
 ## Back up and restore
 
@@ -86,6 +87,11 @@ Postgres: `pg_dump` / `pg_restore` as usual. Migrations are applied automaticall
 
 ## Incidents
 
+0. **Money movement is frozen.** The bank failed during a payment and the outcome is unknown, or the audit log failed
+   after one. The console shows a red banner; `outcome_unknown` is in the audit trail. Check the account against the
+   bank's own records, enter anything the log missed, then press "I've checked the account" (`POST /api/reconcile`,
+   role with `approve`). Do not retry the payment first: it may have gone through. A restart also clears the freeze,
+   so check before restarting.
 1. **Money moved that the customer didn't intend.** Find the `executed` entry in `/api/audit`
    and the `held` / `approval_decision` entries before it (they carry the approval id and the
    approver). Pull the conversation from the logs by `request_id`. Reverse the payment through
