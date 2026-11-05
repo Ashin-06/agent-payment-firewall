@@ -33,6 +33,25 @@ jobs:
       - if: always()
         run: coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY" || true
 
+  everywhere:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install -r requirements.txt
+      - run: python -m pytest -q
+      - run: python -m agentfw demo
+        env:
+          PYTHONUTF8: "1"
+
   image:
     runs-on: ubuntu-latest
     timeout-minutes: 15

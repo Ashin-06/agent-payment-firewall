@@ -55,6 +55,25 @@ class AuditLog:
             rows = c.execute(text("SELECT entry FROM audit_log ORDER BY seq DESC LIMIT :n"), {"n": limit}).all()
         return [json.loads(r[0]) for r in reversed(rows)]
 
+    def unresolved(self) -> str | None:
+        """Why money must stay frozen after a restart: an unknown outcome nobody has reconciled, or a
+        payment that started and has no recorded end, because the process died in between."""
+        ended = False
+        with self.db.connect() as c:
+            for (raw,) in c.execute(text("SELECT entry FROM audit_log ORDER BY seq DESC")):
+                event = json.loads(raw)["event"]
+                if event == "reconciled":
+                    return None
+                if event == "outcome_unknown":
+                    return "a payment's outcome was unknown before the restart and nobody has checked it"
+                if event in ("executed", "error"):
+                    ended = True
+                elif event == "executing":
+                    if not ended:
+                        return "a payment started before the restart and has no recorded outcome"
+                    ended = False
+        return None
+
     def verify(self) -> tuple[bool, str]:
         """ponytail: walks the whole chain; checkpoint signed heads once it grows past millions of rows."""
         prev, n = self.GENESIS, 0

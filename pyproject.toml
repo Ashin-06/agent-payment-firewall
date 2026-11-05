@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-payment-firewall"
-version = "1.1.0"
+version = "1.2.0"
 description = "A security layer between an LLM banking assistant and the tools that move money"
 readme = "README.md"
 requires-python = ">=3.12"

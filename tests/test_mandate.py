@@ -61,6 +61,29 @@ def test_everything_else_grants_nothing(text, name, amount):
     assert not allowed(book(text), name, amount)
 
 
+@pytest.mark.parametrize("text, name, amount", [
+    ("Send ₹2,000 to Rohan for dinner.", "Rohan Mehta", 2000), ("Pay Mom 500.", "Mom", 500), ("send 500 to mom", "Mom", 500),
+    ("Send 500 rupees to Mom.", "Mom", 500), ("Pay Rohan's ₹900 invoice.", "Rohan Mehta", 900), ("Give Mom ₹500.", "Mom", 500),
+    ("Transfer 1500 to Rohan please", "Rohan Mehta", 1500), ("Send Mom Rs 500 today.", "Mom", 500), ("Refund Rohan ₹300.", "Rohan Mehta", 300),
+    ("Pay Mom 500 on Monday.", "Mom", 500), ("Pay my statement of ₹900 to BESCOM.", "BESCOM Electricity", 900),
+])
+def test_tightening_keeps_plain_requests_working(text, name, amount):
+    assert allowed(book(text), name, amount)
+
+
+def test_correction_replaces_what_came_before():
+    m = book("Send ₹500 to Mom.", "Actually send ₹600 to Mom.")
+    assert not allowed(m, "Mom", 500) and allowed(m, "Mom", 600)
+
+
+def test_correction_withdraws_held_requests():
+    g = Gateway(Bank.demo())
+    g.user_message("Pay ₹30,000 to Rohan.")
+    o = g.call("transfer", {"payee_id": "P1", "amount": 30000, "memo": ""})
+    g.user_message("Sorry, send ₹20,000 to Rohan.")
+    assert g.approvals.get(o.approval_id).status == "denied"
+
+
 @pytest.mark.parametrize("text", ["If my salary came in, send ₹500 to Mom.", "Tomorrow send ₹500 to Mom.", "Next month send ₹500 to Mom.",
                                   "Send ₹500 to Mom every week.", "Once the money arrives, send ₹500 to Mom."])
 def test_conditions_and_later_dates_need_a_person(text):
@@ -198,6 +221,24 @@ def test_unknown_outcome_freezes_money_until_a_person_checks():
     g.reconcile("meera")
     assert g.call("transfer", args).status == "executed"
     assert any(e["event"] == "reconciled" and e["by"] == "meera" for e in g.audit.tail(50))
+
+
+def test_a_restart_does_not_clear_a_freeze():
+    from agentfw.audit import AuditLog
+    from agentfw.db import connect
+
+    audit = AuditLog(connect("sqlite://"), key=b"k" * 32)
+    assert audit.unresolved() is None
+    audit.append("executing", tool="transfer", args={})
+    audit.append("executed", tool="transfer", args={})
+    assert audit.unresolved() is None
+    audit.append("executing", tool="transfer", args={})  # the process died here
+    assert "no recorded outcome" in audit.unresolved()
+    audit.append("reconciled", by="meera", was="")
+    assert audit.unresolved() is None
+    audit.append("executing", tool="transfer", args={})
+    audit.append("outcome_unknown", tool="transfer", args={}, error="TimeoutError")
+    assert "nobody has checked" in audit.unresolved()
 
 
 def test_no_record_no_payment():

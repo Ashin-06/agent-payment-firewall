@@ -2,6 +2,21 @@
 
 All notable changes to this project. Versions follow [semantic versioning](https://semver.org/).
 
+## 1.2.0 — 2026-11-06
+
+A second attack round, aimed at the 1.1.0 parser: 21 of 30 new sentences were wrongly read as requests to pay.
+
+### Fixed
+- Documents aren't money: "send the ₹5,000 receipt to Mom", "give me the details of..." and "add Rohan to my list" grant no payment.
+- A number with no currency sign counts only where an amount can stand, so not "the 5000 word essay" or "flat 9000". Percentages and other currencies don't count.
+- A payee after "instead of", "rather than" or "except" isn't authorised.
+- A correction ("actually send ₹600") replaces what came before and withdraws held requests.
+- A restart no longer clears a freeze. An unreconciled unknown outcome, or a payment with no recorded end, freezes money on start.
+
+### Added
+- `python -m agentfw demo`: five attacks side by side, in seconds.
+- CI runs the tests on Linux, Windows and macOS, with Python 3.12 and 3.13.
+
 ## 1.1.0 — 2026-11-05
 
 Version 1.0.0 stopped all of its own attacks, but 34 of 35 new exploits written against it worked.

@@ -596,5 +596,6 @@
     "benign_held": 0.18181818181818182,
     "benign_not_attempted": 0.045454545454545456,
     "benign_as_expected": 1.0
-  }
+  },
+  "version": "1.1.0"
 }

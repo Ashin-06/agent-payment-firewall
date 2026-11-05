@@ -1,6 +1,7 @@
 """Command line.
 
     python -m agentfw bench [--live] [--only A01 B02]
+    python -m agentfw demo
     python -m agentfw redteam [--sessions 20000] [--seed 7]
     python -m agentfw chat "Pay the Acme invoice inv-2291" [--no-firewall]
     python -m agentfw scan path/to/email.txt
@@ -32,6 +33,7 @@ def main(argv=None):
     b.add_argument("--plain-prompt", action="store_true", help="with --live: an assistant with no security instructions in its prompt")
     b.add_argument("--only", nargs="*")
     b.add_argument("--json")
+    sub.add_parser("demo", help="a few attacks side by side, with and without the firewall; no API key needed")
     t = sub.add_parser("redteam", help="exploit suite, randomized attack sessions checked by an independent oracle, layer ablation")
     t.add_argument("--sessions", type=int, default=20000)
     t.add_argument("--seed", type=int, default=7)
@@ -82,6 +84,10 @@ def main(argv=None):
 
             model = (GEMINI_MODEL if provider() == "gemini" else MODEL) if a.live else "fixed traces of a fully compromised assistant"
             Path(a.json).write_text(json.dumps({"assistant": model, "prompt": "plain" if a.plain_prompt else "hardened", "rows": rows, "summary": s}, indent=2, ensure_ascii=False), encoding="utf-8")
+    elif a.cmd == "demo":
+        from .bench import demo
+
+        demo()
     elif a.cmd == "redteam":
         from .redteam import main as redteam
 

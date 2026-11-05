@@ -34,7 +34,7 @@ if settings.production and not provider():
 store = db.connect(settings.database_url)
 audit_log = AuditLog(store, key=settings.secret["AUDIT_KEY"], previous_keys=settings.previous["AUDIT_KEY"])
 approvals = ApprovalQueue(store)
-app = FastAPI(title="Agent Payment Firewall", version="1.1.0")
+app = FastAPI(title="Agent Payment Firewall", version="1.2.0")
 ops.install(app, settings, {"database": lambda: store.connect().close()})
 _lock = threading.Lock()
 state: dict = {}
@@ -51,6 +51,7 @@ def reset(enforce: bool = True) -> None:
 
 
 reset()
+state["gw"].frozen = audit_log.unresolved()  # a restart must not clear a freeze
 
 
 class ChatIn(BaseModel):
@@ -165,5 +166,7 @@ def do_reset(body: ResetIn, ident: dict = Depends(ops.require("reset"))):
         raise HTTPException(403, "reset is disabled in production")
     with _lock:
         approvals.expire_pending()  # holds against the previous demo account can no longer run
+        if state["gw"].frozen:  # the account it was about is being replaced
+            state["gw"].reconcile(ident["user"] or "demo reset")
         reset(body.enforce)
     return {"ok": True, "enforce": body.enforce}

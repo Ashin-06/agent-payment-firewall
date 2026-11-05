@@ -5,12 +5,12 @@ How to deploy, configure and operate the firewall console. Commands assume the r
 ## Deploy
 
 ```bash
-docker build -t agent-payment-firewall:1.1.0 .
+docker build -t agent-payment-firewall:1.2.0 .
 python -m agentfw.ops keygen          # one API key per client, plus the audit key
 docker run -d --name agentfw -p 8004:8004 -v agentfw-data:/data \
   -e AGENTFW_KEYS_FILE=/run/secrets/agentfw-keys.json \
   -e AGENTFW_AUDIT_KEY=... -e ANTHROPIC_API_KEY=... \
-  agent-payment-firewall:1.1.0
+  agent-payment-firewall:1.2.0
 curl -fsS http://127.0.0.1:8004/readyz
 ```
 
@@ -90,8 +90,8 @@ Postgres: `pg_dump` / `pg_restore` as usual. Migrations are applied automaticall
 0. **Money movement is frozen.** The bank failed during a payment and the outcome is unknown, or the audit log failed
    after one. The console shows a red banner; `outcome_unknown` is in the audit trail. Check the account against the
    bank's own records, enter anything the log missed, then press "I've checked the account" (`POST /api/reconcile`,
-   role with `approve`). Do not retry the payment first: it may have gone through. A restart also clears the freeze,
-   so check before restarting.
+   role with `approve`). Do not retry the payment first: it may have gone through. A restart doesn't clear the freeze:
+   on start, an unreconciled `outcome_unknown`, or an `executing` entry with no result, freezes money again.
 1. **Money moved that the customer didn't intend.** Find the `executed` entry in `/api/audit`
    and the `held` / `approval_decision` entries before it (they carry the approval id and the
    approver). Pull the conversation from the logs by `request_id`. Reverse the payment through

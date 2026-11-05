@@ -1,6 +1,6 @@
 # Threat model
 
-What the firewall protects, from whom, and what is still open. Written for the 1.1.0 code; it
+What the firewall protects, from whom, and what is still open. Written for the 1.2.0 code; it
 has not been reviewed by anyone independent.
 
 ## What it protects
@@ -42,8 +42,8 @@ documents, emails, statement memos (third parties) ──────┘        
 | Injected or inflated amount | Amounts must be asked for, or come from a bill the customer asked to pay for that payee up to ₹10,000; otherwise held | A poisoned bill can inflate within ₹10,000. The customer may approve a held payment without reading it |
 | Data exfiltration through memos or beacons | Memo rule on canonical text (OTPs, PINs, account and card numbers, long numbers, encoded text the customer didn't type); images, active HTML and URL queries removed from what the model reads and writes | Short secrets in plain words, and the amount field as a covert channel |
 | Malformed or hostile arguments | Strict schema check before any rule; digits and text made canonical; failures refused | — |
-| Bank timeout followed by a retry | Unknown outcome freezes money until a person reconciles | The freeze is per process, in memory. A real adapter should also pass idempotency keys |
-| Payment with no record | Audit written before the bank is called; if that fails nothing is sent; if the record after fails, money freezes | A crash between the bank call and the second record leaves an `executing` entry with no result, which reconciliation should look for |
+| Bank timeout followed by a retry | Unknown outcome freezes money until a person reconciles | With several replicas, only the one that saw the failure freezes until it restarts. A real adapter should also pass idempotency keys |
+| Payment with no record | Audit written before the bank is called; if that fails nothing is sent; if the record after fails, money freezes | A crash between the bank call and the second record leaves an `executing` entry with no result, which freezes money on the next start |
 | Assistant keeps trying after being refused | Stops after 5 refused or held calls until the customer speaks; at most 5 open approvals | Per conversation, in memory |
 | Approving something other than what is shown | The approver sees the resolved recipient, bound to the approval and compared again at execution; hard limits rechecked | A careless approver can still pay saved payees up to the daily ceiling |
 | Look-alike payees | Confusable skeletons compared with saved payees | Only names the skeleton table covers |
@@ -64,6 +64,5 @@ documents, emails, statement memos (third parties) ──────┘        
 - Strong customer authentication for approvals (device binding, an additional factor); the
   console's approve button stands in for the bank app's confirmation screen.
 - Durable conversation state: provenance labels and mandates are per process, so a restart forgets what the
-  customer asked for (the safe direction: more calls are held or refused). The same restart also clears a freeze;
-  see the runbook.
+  customer asked for (the safe direction: more calls are held or refused).
 - Languages other than English: the mandate rules don't read them, so every such payment waits for a confirmation.

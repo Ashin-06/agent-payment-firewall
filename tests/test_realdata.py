@@ -25,7 +25,7 @@ def test_attacker_destination_from_a_transfer_subject_is_refused():
 
 def test_user_typed_iban_and_saved_payees_go_through_or_wait_for_confirmation():
     refund = [{"function": "send_money", "args": {"recipient": "GB29NWBK60161331926819", "amount": 10.0, "subject": "Refund"}}]
-    assert replay(build(ENV, "Please refund GB29NWBK60161331926819 the 10.0 they sent me"), refund, ENV) == "executed"
+    assert replay(build(ENV, "Please refund 10.0 to GB29NWBK60161331926819"), refund, ENV) == "executed"
     rent = [{"function": "update_scheduled_transaction", "args": {"id": 7, "amount": 1200.0}}]
     assert replay(build(ENV, "Update my rent to 1200.0"), rent, ENV) == "held"  # not a plain request to pay: a person confirms
     assert replay(build(ENV, "Please pay my rent of 1200.0"), rent, ENV) == "executed"

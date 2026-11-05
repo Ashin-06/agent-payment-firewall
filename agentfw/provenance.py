@@ -36,7 +36,7 @@ ACCOUNT_RE = re.compile(r"\d[\d \-]{6,22}\d")
 # IBANs carry letters in the bank code (GB29 NWBK 6016...), so they are compared whole, not as digits
 IBAN_RE = re.compile(r"\b[A-Z]{2}\d{2}(?:[A-Z0-9]{10,30}|(?: [A-Z0-9]{4}){2,7}(?: [A-Z0-9]{1,4})?)\b")  # compact or in fours
 # the left boundary keeps "INV-2291" and "A/c 12" from counting as amounts
-AMOUNT_RE = re.compile(r"(?<![\w\-/.,])(₹\s*|(?:rs\.?|inr)\s*)?(\d{1,3}(?:,\d{2,3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*(k|l|lakhs?|thousand|hundred|crores?|cr)?\b", re.I)
+AMOUNT_RE = re.compile(r"(?<![\w\-/.,$€£])(₹\s*|(?:rs\.?|inr)\s*)?(\d{1,3}(?:,\d{2,3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*(k|l|lakhs?|thousand|hundred|crores?|cr)?\b(?!\s*%)", re.I)
 IFSC_RE = re.compile(r"\b[A-Z]{4}0[A-Z0-9]{6}\b")
 UNITS = {"k": 1_000, "thousand": 1_000, "hundred": 100, "l": 100_000, "lakh": 100_000, "lakhs": 100_000,
          "cr": 10_000_000, "crore": 10_000_000, "crores": 10_000_000}

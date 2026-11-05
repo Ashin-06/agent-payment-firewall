@@ -28,13 +28,24 @@ _PARTS = re.compile(r",\s+|\s+and\s+|\s*&\s*", re.I)
 _LEAD = r"(?:(?:please|pls|plz|kindly|ok|okay|yes|yeah|sure|hey|hi|hello|also|and|now|next|first|so|thanks|thank you|actually|just|right)[,\s]+)*"
 _ASK = (r"(?:(?:can|could|would|will) (?:you|u)(?: please| kindly)?(?: help me)? |i(?:'d| would) like (?:you )?to |i (?:want|need) (?:you )?to |"
         r"i have to |you (?:can|may|should) |let'?s |help me |go ahead and )?")
-_VERB = r"(?:pay|send|transfer|wire|remit|settle|clear|give|repay|refund|add|register|save)\b(?! (?:of|failed|status|was|is|limit|history|details|slip|day|check)\b)"
-_REQUEST = re.compile(rf"(?:^|[,:]\s*|\band\s+|\bplease\s+){_LEAD}{_ASK}{_VERB}", re.I)
-_REPORTED = re.compile(r"\b(?:said|says|say|asks?|asked|wrote|writes|told|tells|claims?|wants?|reads?|according|email|message|letter)\b", re.I)
+_NOT_A_PAYMENT = r"(?! (?:of|me|us|attention|failed|status|was|is|limit|history|details|slip|day|check)\b)"
+_PAY_VERB = rf"(?:pay|send|transfer|wire|remit|settle|give|repay|refund|clear(?=.*\b(?:bills?|dues?|invoices?)\b))\b{_NOT_A_PAYMENT}"
+_OPENING = rf"(?:^|[,:]\s*|\band\s+|\bplease\s+){_LEAD}{_ASK}"
+_PAY = re.compile(rf"{_OPENING}{_PAY_VERB}", re.I)
+_REQUEST = re.compile(rf"{_OPENING}(?:{_PAY_VERB}|(?:add|register|save)\b)", re.I)
+# "send the ₹5,000 receipt to Mom" asks for a document to move, not money
+_PAPERWORK = re.compile(r"\b(?:receipts?|statements?|reports?|cop(?:y|ies)|details?|screenshots?|proofs?|emails?|documents?|files?|messages?|summar(?:y|ies)|"
+                        r"lists?|history|essays?|notes?|photos?|address(?:es)?|quotes?|reminders?|links?)\b", re.I)
+_MOVES_MONEY_ONLY = re.compile(r"\b(?:pay|settle|remit|repay|refund)\b", re.I)
+# A number with no currency sign counts only where an amount can stand: not "the 5000 word essay", "10%" or "$500"
+_BARE_AMOUNT = re.compile(r"(?<![\w\-/.,$€£#])(\d{1,3}(?:,\d{2,3})+(?:\.\d+)?|\d+(?:\.\d+)?)"
+                          r"(?=\s*(?:(?:rupees?|rs|bucks|each|only|to|for|today|now|please|pls|thanks|on|at|and)\b|/-|$|[,.!?;](?:\s|$)))", re.I)
+_REPORTED = re.compile(r"\b(?:said|says|say|asks?|asked|wrote|writes|told|tells|claims?|wants?|reads?|according|email|message|letter|note|reminder|subject|title|called|named)\b", re.I)
+_CORRECTION = re.compile(r"\b(?:actually|instead|correction|sorry|i meant|rather)\b", re.I)
 _POLITE = re.compile(rf"^{_LEAD}(?:can|could|would|will) (?:you|u)\b", re.I)
 _QUESTION = re.compile(rf"^{_LEAD}(?:did|do|does|how|what|why|when|where|who|whom|which|was|were|is|are|has|have|had|should|shall|am|might|tell me)\b", re.I)
 _VETO = re.compile(r"\b(?:don'?t|do not|never|cancel|stop|abort|revoke|never ?mind|hold on|hold off|wait|no need)\b", re.I)
-_TAIL_NOT = re.compile(r"[,\s]*\b(?:not|don'?t|do not)\b.*$", re.I | re.S)
+_TAIL_NOT = re.compile(r"[,\s]*\b(?:not|don'?t|do not|instead of|rather than|except|excluding|other than|apart from)\b.*$", re.I | re.S)
 _CONDITION = re.compile(r"\b(?:if|unless|when|whenever|once|in case|provided|assuming|depending|after|before|whatever|anything|everything)\b", re.I)
 _FUTURE = re.compile(r"\b(?:tomorrow|tonight|later|next (?:week|month|year|\w+day)|every|monthly|weekly|daily|yearly|\d+(?:st|nd|rd|th))\b", re.I)
 _PRONOUN = re.compile(r"\b(?:him|her|them|it|that|same)\b", re.I)
@@ -96,7 +107,7 @@ def _segments(clause: str, inherited: set[float]) -> list[Segment]:
 
 def _amounts(text: str) -> set[float]:
     text = _ID_LIKE.sub(" ", text)
-    return amounts_in(text, marked_only=True) or amounts_in(text)
+    return amounts_in(text, marked_only=True) or {round(float(n.replace(",", "")), 2) for n in _BARE_AMOUNT.findall(canon(text))}
 
 
 class Mandates:
@@ -129,12 +140,17 @@ class Mandates:
         question = clause.endswith("?") and not _POLITE.search(clause)
         if not request or question or _QUESTION.search(clause) or _REPORTED.search(clause, 0, request.start()):
             return False  # "the email says: send ₹5,000 to Rohan" reports a request; it doesn't make one
+        corrected = bool(_CORRECTION.search(clause))
+        if corrected:  # "actually send ₹600": the ₹500 asked for a moment ago no longer stands
+            for m in self.items:
+                m.revoked = True
         clause = _TAIL_NOT.sub("", clause)  # "send it to Mom, not Rohan"
+        pays = _PAY.search(clause) and (_MOVES_MONEY_ONLY.search(clause) or not _PAPERWORK.search(clause))
         inherited, context = set(), ""
         named_here = any(set(name_words(n)) & set(skeleton(clause).split()) for n in known_names)
         if _PRONOUN.search(clause):  # "...Rohan wants ₹500. Send it to him."
             inherited, context = _amounts(previous), "" if named_here else previous
-        segments = _segments(clause, inherited)
+        segments = _segments(clause, inherited) if pays else []  # "add Rohan to my list" authorises no money
         for seg in segments:
             seg.words |= set(skeleton(context).split())
         reason = None
@@ -150,8 +166,8 @@ class Mandates:
             raw = (count.group(1) or count.group(2)).lower()
             times = min(_TIMES.get(raw) or int(raw), 10) or 1
         self.items.append(Mandate(self.seq, now, clause, segments, accounts_in(clause), set(IFSC_RE.findall(clause.upper())), times,
-                                  bool(_DOCUMENT.search(clause)) and not any(s.amounts for s in segments), reason))
-        return False
+                                  bool(pays and _DOCUMENT.search(clause)) and not any(s.amounts for s in segments), reason))
+        return corrected
 
     def _active(self, now: float, ttl: float):
         return [m for m in reversed(self.items) if not m.revoked and now - m.at <= ttl]

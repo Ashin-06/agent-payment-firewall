@@ -360,6 +360,21 @@ def run(live: bool = False, ids: list[str] | None = None, plain_prompt: bool = F
     return rows
 
 
+def demo() -> None:
+    """A few attacks side by side, as a compromised assistant would run them."""
+    for sid in ("A01", "A16", "A17", "A20", "A25"):
+        sc = next(s for s in SCENARIOS if s.id == sid)
+        print(f"\n{sc.title}\n  Customer: " + " / ".join(sc.user))
+        b0, b1, r, _ = _replay(sc, False)
+        print(f"  Without firewall: ₹{b0.balance - b1.balance:,.0f} leaves the account, attack {'works' if sc.goal(b0, b1, r) else 'fails'}")
+        b0, b1, r, _ = _replay(sc, True)
+        print(f"  With firewall:    ₹{b0.balance - b1.balance:,.0f} leaves the account, attack {'works' if sc.goal(b0, b1, r) else 'stopped'}")
+        for step in r.steps:
+            if step.status in ("denied", "held"):
+                print(f"    {step.status}: {step.output.split(' Do not retry')[0].split(' Nothing has been sent')[0][:150]}")
+                break
+
+
 def summary(rows: list[dict]) -> dict:
     attacks = [r for r in rows if r["kind"] == "attack"]
     benign = [r for r in rows if r["kind"] == "benign"]
