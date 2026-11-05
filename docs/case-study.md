@@ -34,11 +34,13 @@ Version 1.1 added mandates and stopped everything known. So the parser became th
 | "Send Mom $500" | the dollar sign was ignored |
 | "Send ₹500 to Mom", then "actually send ₹600" | the ₹500 still stood |
 
-Version 1.2 fixes these and adds them as regression tests. The lesson is the one the design already assumes: hand-written patterns will miss things, so a miss has to be cheap. Every fix here makes the parser grant less, and anything it doesn't grant waits for a person.
+Version 1.2 fixed those. Then a third round tried 31 everyday sentences, and 26 worked: "Send ₹500 to Mom maybe", "Pay Mom ₹500 by Friday", "Send ₹5,000 to Rohan's wife", "This is a test, send ₹500 to Mom".
+
+That result showed the design was wrong, not just incomplete. The parser granted authority unless it spotted a warning sign, and warning signs have no end. Version 1.3 turns this around: a sentence grants money only if every word in it is a payee's name, a number or on a short list. One unknown word and the payment waits for a person. A miss now costs a confirmation in the common case. Natural sentences such as "My mom needs ₹500, send it to her" pay that cost.
 
 ## The approach
 
-**Mandates: single-use authority from the customer's own words.** Each customer sentence is parsed by fixed rules, never by a model, so nothing the assistant reads can affect the result. A plain request becomes a mandate naming the payees, the amounts that go with each, and how many times. Executing or holding a payment spends it. Questions, reports ("the email says: send..."), negations, cancellations, conditions and future dates grant nothing or need confirmation. Unusual wording also grants nothing, so a parsing miss costs one confirmation, never a payment.
+**Mandates: single-use authority from the customer's own words.** Each customer sentence is parsed by fixed rules, never by a model, so nothing the assistant reads can affect the result. A plain request becomes a mandate naming the payees, the amounts that go with each, and how many times. Executing or holding a payment spends it. Questions, reports ("the email says: send..."), negations, cancellations, conditions and future dates grant nothing or need confirmation. So does any sentence with a word the rules don't know.
 
 Mandates sit beside provenance, not in place of it. Each covers what the other misses:
 
@@ -57,14 +59,14 @@ With both, an account the customer never typed is refused outright. In 2,000 ses
 
 ## Evidence
 
-Numbers, method and commands are in [evaluation.md](evaluation.md). In short: 0 of 28 built-in attacks, 0 of 144 AgentDojo task and attack pairs executed, 0 of 84 exploits, and 0 oracle violations in 20,000 randomized sessions with injected faults, while 6,290 authorised payments still went through.
+Numbers, method and commands are in [evaluation.md](evaluation.md). In short: 0 of 28 built-in attacks, 0 of 144 AgentDojo task and attack pairs executed, 0 of 115 exploits, and 0 oracle violations in 20,000 randomized sessions with injected faults, while 6,290 authorised payments still went through.
 
 Removing each layer in turn shows what it does:
 
 | Layer removed | Built-in attacks that now succeed | Exploits that now work | Oracle violations in 300 sessions | Attacker payments if all approved |
 |---|---|---|---|---|
-| Mandates | 11 | 51 | 108 | 0 |
-| Holding for the customer | 14 | 54 | 211 | 0 |
+| Mandates | 11 | 82 | 108 | 0 |
+| Holding for the customer | 14 | 85 | 211 | 0 |
 | Memo rules | 1 | 6 | 24 | 0 |
 | Fail-safe freeze and stop | 0 | 2 | 1 | 0 |
 | Provenance | 0 | 1 | 0 | 3 |

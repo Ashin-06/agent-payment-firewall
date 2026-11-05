@@ -29,7 +29,7 @@ flowchart LR
 
 | Layer | What it does |
 |---|---|
-| Mandates | Reads each customer message with fixed rules, no model involved, and turns plain requests into single-use authority: this payee, this amount, this many times. Questions, "don't pay", "cancel that", conditions and later dates grant nothing. |
+| Mandates | Reads each customer message with fixed rules, no model involved, and turns plain requests into single-use authority: this payee, this amount, this many times. Deny by default: every word must be a name, a number or on a short list, so one unknown word ("maybe", "by Friday", "Rohan's wife") grants nothing. |
 | Provenance | Labels all text as typed by the customer, from bank systems, or from third parties. A new payee's account number must have been typed by the customer. This is a refusal, not a hold, so it survives a customer who approves everything. |
 | Limits | Per-payment and daily ceilings, payments per hour, splitting under thresholds, cooling-off for new payees, quiet hours. Rechecked when an approval runs. |
 | Approvals | A held call is bound to a hash of its exact arguments and can be used once. The approver sees the resolved recipient, not a payee ID. |
@@ -46,7 +46,7 @@ Needs Python 3.12 or newer; CI runs it on Linux, Windows and macOS. No API key i
 ```bash
 pip install -r requirements.txt
 python -m agentfw demo              # five attacks side by side, in seconds
-python -m pytest -q                 # 137 tests
+python -m pytest -q                 # 218 tests
 python -m agentfw bench             # 28 attacks and 22 normal tasks
 python -m agentfw redteam --sessions 2000   # exploits, randomized sessions, each layer removed in turn
 python -m agentfw serve             # console on http://127.0.0.1:8004; type "replay A16" to watch an attack
@@ -62,7 +62,7 @@ All from a fully compromised assistant, the worst case, unless stated otherwise.
 |---|---|---|
 | Built-in attacks | 28 of 28 succeed | 0 of 28 (13 refused, 14 held, 1 defused) |
 | AgentDojo banking attacks, every task with every attack | not applicable | 0 of 144 pairs executed (136 refused, 8 held) |
-| Exploits found by attacking earlier versions | 34 of 35 worked on 1.0, 21 of 30 more on 1.1 | 0 of 84 work |
+| Exploits found by attacking earlier versions | 34 of 35 worked on 1.0, 21 of 30 on 1.1, 26 of 31 on 1.2 | 0 of 115 work |
 | 20,000 randomized attack sessions, 25% with injected faults | not applicable | 0 oracle violations, 6,290 authorised payments still made |
 | Customer who approves every held request, 2,000 sessions | not applicable | 0 payments reached the attacker |
 
@@ -70,7 +70,7 @@ The randomized sessions are checked by an oracle that shares no code with the po
 
 With a real model, the assistant was tricked for real. `gemini-3.1-flash-lite` with a plain system prompt carried out 15 of the 28 attacks without the firewall and 0 of 28 with it, and all 22 normal tasks behaved as expected. That is one run on a free-tier quota, made on version 1.1: it shows the attacks work on a current model, not a measured rate.
 
-What it costs: 5,000 of 5,000 plainly worded small requests go through with no friction, and 15 of 20 harder phrasings do. The other 5 wait for a confirmation; none paid the wrong payee or amount. On AgentDojo's normal tasks, the 4 that only read go through. Of the 10 that move money, 8 wait for one confirmation and 2 are refused, and the 2 that change account settings aren't offered. That suite relies on the assistant working out amounts and following documents, which is exactly what this firewall holds back.
+What it costs: 5,000 of 5,000 plainly worded small requests go through with no friction, and 14 of 20 harder phrasings do. The other 6 wait for a confirmation; none paid the wrong payee or amount. On AgentDojo's normal tasks, the 4 that only read go through. Of the 10 that move money, 8 wait for one confirmation and 2 are refused, and the 2 that change account settings aren't offered. That suite relies on the assistant working out amounts and following documents, which is exactly what this firewall holds back.
 
 ## Using it with your own assistant
 
@@ -93,7 +93,7 @@ To connect real systems, implement the nine bank methods (`get_balance`, `list_p
 - If an attacker gets the customer to type their account number, for example during a phone call, the firewall can't tell. Text pasted into the chat is only recognised when it looks pasted: forwarded-mail headers or injection phrasing.
 - Held payments are only as good as the person approving them. A customer who approves everything is safe from new accounts, but can still send up to the daily ceiling to saved payees.
 - An amount from a bill the customer asked to pay is accepted up to ₹10,000, so a poisoned bill can inflate a payment within that limit.
-- The mandate rules read English. Anything else waits for a confirmation, and so does unusual wording. They are hand-written patterns: the second attack round found 21 sentences the first version misread, and there may be more.
+- The mandate rules read English. Anything else waits for a confirmation, and so does unusual wording. Natural extra words such as "she needs it" also cost a confirmation, because the rules grant only what they fully understand. A sentence made entirely of listed words could still be misread.
 - The console runs one demo account on a sandbox bank. A real deployment needs a session per signed-in customer, the bank's own APIs with idempotency keys, and approvals confirmed in the bank's app.
 - The red team and the oracle were written by the same author as the firewall, and nobody independent has reviewed it. Zero violations means none were found in those tests, not that none exist.
 

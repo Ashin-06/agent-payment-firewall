@@ -34,7 +34,7 @@ if settings.production and not provider():
 store = db.connect(settings.database_url)
 audit_log = AuditLog(store, key=settings.secret["AUDIT_KEY"], previous_keys=settings.previous["AUDIT_KEY"])
 approvals = ApprovalQueue(store)
-app = FastAPI(title="Agent Payment Firewall", version="1.2.0")
+app = FastAPI(title="Agent Payment Firewall", version="1.3.0")
 ops.install(app, settings, {"database": lambda: store.connect().close()})
 _lock = threading.Lock()
 state: dict = {}

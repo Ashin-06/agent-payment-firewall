@@ -5,12 +5,14 @@ How to deploy, configure and operate the firewall console. Commands assume the r
 ## Deploy
 
 ```bash
-docker build -t agent-payment-firewall:1.2.0 .
+docker build -t agent-payment-firewall:1.3.0 .
 python -m agentfw.ops keygen          # one API key per client, plus the audit key
+# put the printed entries in agentfw-keys.json: {"sha256:<hex>": {"user": "meera", "role": "customer"}}
 docker run -d --name agentfw -p 8004:8004 -v agentfw-data:/data \
+  -v "$PWD/agentfw-keys.json:/run/secrets/agentfw-keys.json:ro" \
   -e AGENTFW_KEYS_FILE=/run/secrets/agentfw-keys.json \
-  -e AGENTFW_AUDIT_KEY=... -e ANTHROPIC_API_KEY=... \
-  agent-payment-firewall:1.2.0
+  -e AGENTFW_AUDIT_KEY=... -e GOOGLE_API_KEY=... \
+  agent-payment-firewall:1.3.0
 curl -fsS http://127.0.0.1:8004/readyz
 ```
 

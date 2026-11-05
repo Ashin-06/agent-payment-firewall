@@ -11,9 +11,11 @@ change the result.
     "Don't pay Rohan yet"                    a veto: earlier authority for Rohan is revoked
     "If my salary is in, send Mom ₹500"      a condition the firewall can't check: needs approval
 
-Anything it can't read as a plain request gets no authority, so the payment waits for the
-customer. Misreading costs a confirmation, never a payment.
-ponytail: English only; other languages always end in a confirmation. Swap the patterns per locale.
+Deny by default. Spotting warning signs can't work, because there is always another one ("send
+₹500 to Mom maybe", "to Rohan's wife", "by Friday"). So a sentence grants money only if every word
+in it is understood: a payee's name, an amount, or a word on the short list below. One unknown word
+and the payment waits for the customer. Misreading costs a confirmation, not a payment.
+ponytail: English only; other languages always end in a confirmation. Add a word list per locale.
 """
 from __future__ import annotations
 
@@ -35,13 +37,14 @@ _PAY = re.compile(rf"{_OPENING}{_PAY_VERB}", re.I)
 _REQUEST = re.compile(rf"{_OPENING}(?:{_PAY_VERB}|(?:add|register|save)\b)", re.I)
 # "send the ₹5,000 receipt to Mom" asks for a document to move, not money
 _PAPERWORK = re.compile(r"\b(?:receipts?|statements?|reports?|cop(?:y|ies)|details?|screenshots?|proofs?|emails?|documents?|files?|messages?|summar(?:y|ies)|"
-                        r"lists?|history|essays?|notes?|photos?|address(?:es)?|quotes?|reminders?|links?)\b", re.I)
+                        r"lists?|history|essays?|notes?|photos?|address(?:es)?|quotes?|reminders?|links?|bills?|invoices?)\b", re.I)
 _MOVES_MONEY_ONLY = re.compile(r"\b(?:pay|settle|remit|repay|refund)\b", re.I)
 # A number with no currency sign counts only where an amount can stand: not "the 5000 word essay", "10%" or "$500"
 _BARE_AMOUNT = re.compile(r"(?<![\w\-/.,$€£#])(\d{1,3}(?:,\d{2,3})+(?:\.\d+)?|\d+(?:\.\d+)?)"
                           r"(?=\s*(?:(?:rupees?|rs|bucks|each|only|to|for|today|now|please|pls|thanks|on|at|and)\b|/-|$|[,.!?;](?:\s|$)))", re.I)
 _REPORTED = re.compile(r"\b(?:said|says|say|asks?|asked|wrote|writes|told|tells|claims?|wants?|reads?|according|email|message|letter|note|reminder|subject|title|called|named)\b", re.I)
 _CORRECTION = re.compile(r"\b(?:actually|instead|correction|sorry|i meant|rather)\b", re.I)
+_ADDS = re.compile(rf"^{_LEAD}{_ASK}(?:add|register|save)\b", re.I)
 _POLITE = re.compile(rf"^{_LEAD}(?:can|could|would|will) (?:you|u)\b", re.I)
 _QUESTION = re.compile(rf"^{_LEAD}(?:did|do|does|how|what|why|when|where|who|whom|which|was|were|is|are|has|have|had|should|shall|am|might|tell me)\b", re.I)
 _VETO = re.compile(r"\b(?:don'?t|do not|never|cancel|stop|abort|revoke|never ?mind|hold on|hold off|wait|no need)\b", re.I)
@@ -53,7 +56,19 @@ _DOCUMENT = re.compile(r"\b(?:bills?|invoices?|dues?|statements?|premiums?)\b", 
 _PASTED = re.compile(r"^\s*(?:>|from:|subject:|sent:|-{3,}\s*(?:original|forwarded))", re.I | re.M)
 _TIMES = {"twice": 2, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6}
 _COUNT = re.compile(r"\b(?:(twice)|(\d+|two|three|four|five|six) times)\b", re.I)
-_ASIDE = re.compile(r"\b(?:for|from|about|regarding|because|with|as)\b.*$", re.I | re.S)
+_ASIDE = re.compile(r"(?<=\S)\s+(?:for|from)\b.*$", re.I | re.S)  # "...to Mom for Rohan's gift" pays Mom
+_OTHER_TASK = re.compile(r"^\s*(?:please\s+)?(?:read|check|show|tell|summari[sz]e|list|look|open|find|get|see|view)\b", re.I)
+# Every word a request to pay may contain, besides names and numbers. Grow it only with care: each word here is a way in.
+_PLAIN_WORDS = frozenset("""
+    pay send transfer wire remit settle give repay refund clear back
+    to my the a an of in and each both also again this that it them him her same s d
+    please pls plz kindly thanks thank you u now today right away asap immediately just ok okay yes yeah sure hi hey hello so first next
+    can could would will i like want need have let go ahead help me
+    money payment amount rupee rupees rs inr bucks only k l lakh lakhs thousand hundred crore crores cr
+    bill bills invoice invoices dues due premium statement rent consumer number policy ref reference customer
+    document documents doc email mail inbox attached account acct ac a c ifsc iban
+    twice times two three four five six sorry actually instead correction
+""".split())
 _ID_LIKE = re.compile(r"\b\d{8,}\b|\b[A-Za-z][\w]*[-/]\d+\b")
 
 
@@ -94,8 +109,7 @@ class Claim:
 def _segments(clause: str, inherited: set[float]) -> list[Segment]:
     groups: list[list[str]] = [[]]
     amounts: list[set[float]] = [set()]
-    for part in _PARTS.split(clause):
-        part = _ASIDE.sub("", part)  # "to Mom for Rohan's gift" pays Mom, not Rohan
+    for part in _money_parts(clause):
         found = _amounts(part)
         if found and amounts[-1]:
             groups.append([])
@@ -103,6 +117,22 @@ def _segments(clause: str, inherited: set[float]) -> list[Segment]:
         groups[-1].append(part)
         amounts[-1] |= found
     return [Segment(set(skeleton(" ".join(g)).split()), a or set(inherited)) for g, a in zip(groups, amounts)]
+
+
+def _money_parts(clause: str) -> list[str]:
+    """The parts of a sentence about money: asides dropped, and other tasks ("...and read my email")."""
+    return [_ASIDE.sub("", p) for p in _PARTS.split(clause) if not _OTHER_TASK.search(p)]
+
+
+def _plainly_understood(clause: str, known_names) -> bool:
+    """Every word in the request is a name, a number or on the short list. "Add my plumber Suresh, ..."
+    names someone new, so checking starts at the verb that moves money."""
+    start = _PAY.search(clause)
+    words = skeleton(_ID_LIKE.sub(" ", " ".join(_money_parts(clause[start.start():])))).split()
+    if clause[:start.start()].strip():  # whatever comes before the verb has to be plain too
+        words += skeleton(clause[:start.start()]).split() if not _ADDS.search(clause) else []
+    names = {w for n in known_names for w in skeleton(n).split()}
+    return all(w in _PLAIN_WORDS or w in names or any(c.isdigit() for c in w) for w in words)
 
 
 def _amounts(text: str) -> set[float]:
@@ -150,9 +180,6 @@ class Mandates:
         named_here = any(set(name_words(n)) & set(skeleton(clause).split()) for n in known_names)
         if _PRONOUN.search(clause):  # "...Rohan wants ₹500. Send it to him."
             inherited, context = _amounts(previous), "" if named_here else previous
-        segments = _segments(clause, inherited) if pays else []  # "add Rohan to my list" authorises no money
-        for seg in segments:
-            seg.words |= set(skeleton(context).split())
         reason = None
         if pasted:
             reason = "the customer's message looks like pasted third-party text"
@@ -160,6 +187,11 @@ class Mandates:
             reason = "the customer's request depends on a condition the firewall can't check"
         elif _FUTURE.search(clause):
             reason = "the customer asked for this at a later time, not now"
+        # "add Rohan to my list" authorises no money, and nor does any sentence not fully understood
+        pays = pays and (reason or _plainly_understood(clause, known_names))
+        segments = _segments(clause, inherited) if pays else []
+        for seg in segments:
+            seg.words |= set(skeleton(context).split())
         count = _COUNT.search(clause)
         times = 1
         if count:

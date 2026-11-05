@@ -2,6 +2,16 @@
 
 All notable changes to this project. Versions follow [semantic versioning](https://semver.org/).
 
+## 1.3.0 — 2026-11-06
+
+A third attack round: 26 of 31 everyday sentences, such as "Send ₹500 to Mom maybe", were read as requests to pay.
+
+### Changed
+- The mandate parser now denies by default. A sentence grants money only if every word in it is a payee's name, a number or on a short list. This costs a confirmation on some natural sentences: harder wordings completing with no friction went from 15 to 14 of 20.
+
+### Fixed
+- The runbook's Docker command didn't mount the key file, so it failed when followed as written.
+
 ## 1.2.0 — 2026-11-06
 
 A second attack round, aimed at the 1.1.0 parser: 21 of 30 new sentences were wrongly read as requests to pay.

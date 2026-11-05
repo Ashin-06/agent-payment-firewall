@@ -1,6 +1,6 @@
 # Threat model
 
-What the firewall protects, from whom, and what is still open. Written for the 1.2.0 code; it
+What the firewall protects, from whom, and what is still open. Written for the 1.3.0 code; it
 has not been reviewed by anyone independent.
 
 ## What it protects
@@ -66,3 +66,4 @@ documents, emails, statement memos (third parties) ──────┘        
 - Durable conversation state: provenance labels and mandates are per process, so a restart forgets what the
   customer asked for (the safe direction: more calls are held or refused).
 - Languages other than English: the mandate rules don't read them, so every such payment waits for a confirmation.
+- A sentence made entirely of listed words but meaning something else. The word list is short to keep this rare, and a test keeps it short.

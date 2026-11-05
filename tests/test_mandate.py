@@ -65,10 +65,35 @@ def test_everything_else_grants_nothing(text, name, amount):
     ("Send ₹2,000 to Rohan for dinner.", "Rohan Mehta", 2000), ("Pay Mom 500.", "Mom", 500), ("send 500 to mom", "Mom", 500),
     ("Send 500 rupees to Mom.", "Mom", 500), ("Pay Rohan's ₹900 invoice.", "Rohan Mehta", 900), ("Give Mom ₹500.", "Mom", 500),
     ("Transfer 1500 to Rohan please", "Rohan Mehta", 1500), ("Send Mom Rs 500 today.", "Mom", 500), ("Refund Rohan ₹300.", "Rohan Mehta", 300),
-    ("Pay Mom 500 on Monday.", "Mom", 500), ("Pay my statement of ₹900 to BESCOM.", "BESCOM Electricity", 900),
+    ("Pay Mom 500 now.", "Mom", 500), ("Send Rohan ₹300 twice.", "Rohan Mehta", 300), ("Pay my statement of ₹900 to BESCOM.", "BESCOM Electricity", 900),
 ])
 def test_tightening_keeps_plain_requests_working(text, name, amount):
     assert allowed(book(text), name, amount)
+
+
+# Words a customer might use that aren't on the list. The list is short on purpose, and this is the point of it.
+UNKNOWN_WORDS = """maybe perhaps possibly probably someday sometime soon later friday monday weekend week tonight wife husband friend brother
+    sister boss neighbour flowers cake gift text whatsapp thankyou joke jk lol kidding test example demo hypothetically suppose imagine pretend either or
+    whichever half quarter double more less around about roughly approximately most least up worth nothing none nobody someone everyone everybody
+    dollars euros pounds bitcoin crypto gold shares owes owed borrowed lent stolen scam fraud refundable deposit fee advance loan interest""".split()
+
+
+@pytest.mark.parametrize("word", UNKNOWN_WORDS)
+def test_one_unknown_word_anywhere_grants_nothing(word):
+    """Deny by default: wherever an unknown word lands in a plain request, no authority results."""
+    tokens = "Send ₹500 to Mom".split()
+    for i in range(1, len(tokens) + 1):
+        sentence = " ".join(tokens[:i] + [word] + tokens[i:]) + "."
+        m = book(sentence)
+        claim = m.claim("Mom", 500, [], 0.0, HOUR)
+        assert claim is None or claim.caution, sentence
+
+
+def test_the_word_list_stays_short():
+    from agentfw.mandate import _PLAIN_WORDS
+
+    assert len(_PLAIN_WORDS) < 150, "each word on the list is a way in; think before adding"
+    assert not {"or", "no", "maybe", "more", "less", "up", "about", "if", "when", "friend", "wife", "worth", "half", "not"} & _PLAIN_WORDS
 
 
 def test_correction_replaces_what_came_before():
@@ -146,7 +171,9 @@ def test_shared_first_name_is_ambiguous():
     m = book("Send ₹500 to Rohan.")
     assert "could mean" in m.claim("Rohan Iyer", 500, ["Rohan Mehta"], 0.0, HOUR).caution
     assert m.claim("Rohan Iyer", 500, [], 0.0, HOUR).caution is None
-    assert book("Send ₹500 to Rohan Iyer.").claim("Rohan Iyer", 500, ["Rohan Mehta"], 0.0, HOUR).caution is None
+    full = Mandates()
+    full.add("Send ₹500 to Rohan Iyer.", 0.0, NAMES + ["Rohan Iyer"])
+    assert full.claim("Rohan Iyer", 500, ["Rohan Mehta"], 0.0, HOUR).caution is None
 
 
 def test_value_parsers():
