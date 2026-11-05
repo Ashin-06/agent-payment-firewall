@@ -32,3 +32,24 @@ jobs:
       - run: python -m agentfw redteam --sessions 5000 --out /tmp/redteam.json
       - if: always()
         run: coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY" || true
+
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t agentfw .
+      - name: refuses to start without configuration
+        run: "! docker run --rm agentfw"
+      - name: starts in production mode and answers
+        run: |
+          key=$(python3 -c "import hashlib; print(hashlib.sha256(b'ci-key').hexdigest())")
+          audit=$(python3 -c "import base64, os; print(base64.b64encode(os.urandom(32)).decode())")
+          docker run -d --name fw -p 8004:8004 -e GOOGLE_API_KEY=unused -e AGENTFW_AUDIT_KEY="$audit" \
+            -e AGENTFW_API_KEYS="{\"sha256:$key\":{\"user\":\"ci\",\"role\":\"admin\"}}" agentfw
+          for _ in $(seq 1 30); do curl -fsS http://127.0.0.1:8004/readyz && break; sleep 2; done
+          curl -fsS http://127.0.0.1:8004/readyz
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8004/api/state)" = 401
+          curl -fsS -H "x-api-key: ci-key" http://127.0.0.1:8004/api/state
+          curl -fsS http://127.0.0.1:8004/ -o /dev/null
+          docker exec fw python -m agentfw bench
