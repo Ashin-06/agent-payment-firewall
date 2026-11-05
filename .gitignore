@@ -4,3 +4,5 @@ __pycache__/
 .venv/
 *.jsonl
 .coverage
+*.egg-info/
+build/

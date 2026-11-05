@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-payment-firewall"
-version = "1.0.0"
+version = "1.1.0"
 description = "A security layer between an LLM banking assistant and the tools that move money"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -29,7 +29,7 @@ agentfw = "agentfw.__main__:main"
 packages = ["agentfw"]
 
 [tool.setuptools.package-data]
-agentfw = ["migrations/*.sql"]
+agentfw = ["migrations/*.sql", "policy.toml", "web/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

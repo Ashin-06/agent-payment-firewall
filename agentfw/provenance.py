@@ -12,6 +12,10 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .mandate import Mandates
 
 
 class Label(str, Enum):
@@ -31,7 +35,12 @@ class Span:
 ACCOUNT_RE = re.compile(r"\d[\d \-]{6,22}\d")
 # IBANs carry letters in the bank code (GB29 NWBK 6016...), so they are compared whole, not as digits
 IBAN_RE = re.compile(r"\b[A-Z]{2}\d{2}(?:[A-Z0-9]{10,30}|(?: [A-Z0-9]{4}){2,7}(?: [A-Z0-9]{1,4})?)\b")  # compact or in fours
-AMOUNT_RE = re.compile(r"(?:₹|rs\.?|inr)?\s*(\d{1,3}(?:,\d{2,3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*(k|l|lakh|lakhs)?\b", re.I)
+# the left boundary keeps "INV-2291" and "A/c 12" from counting as amounts
+AMOUNT_RE = re.compile(r"(?<![\w\-/.,])(₹\s*|(?:rs\.?|inr)\s*)?(\d{1,3}(?:,\d{2,3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*(k|l|lakhs?|thousand|hundred|crores?|cr)?\b", re.I)
+IFSC_RE = re.compile(r"\b[A-Z]{4}0[A-Z0-9]{6}\b")
+UNITS = {"k": 1_000, "thousand": 1_000, "hundred": 100, "l": 100_000, "lakh": 100_000, "lakhs": 100_000,
+         "cr": 10_000_000, "crore": 10_000_000, "crores": 10_000_000}
+INVISIBLE = re.compile("[\u200b-\u200f\u2060-\u2064\ufeff\u00ad\u202a-\u202e\u2066-\u2069\U000e0000-\U000e007f]")
 
 # Latin look-alikes from Cyrillic and Greek, enough to catch payee-name spoofing
 CONFUSABLES = str.maketrans({
@@ -41,44 +50,51 @@ CONFUSABLES = str.maketrans({
 })
 
 
+def canon(text: str) -> str:
+    """One spelling for a value: compatibility forms folded, invisible characters gone, every digit ASCII."""
+    s = INVISIBLE.sub("", unicodedata.normalize("NFKC", str(text)))
+    return "".join(str(unicodedata.digit(c)) if c.isdecimal() and not c.isascii() else c for c in s)
+
+
 def skeleton(name: str) -> str:
-    s = unicodedata.normalize("NFKC", name).translate(CONFUSABLES).casefold()
-    return re.sub(r"[^a-z0-9]+", " ", s).strip()
+    s = canon(name).translate(CONFUSABLES).casefold()
+    return " ".join("".join(c if unicodedata.category(c)[0] in "LMN" else " " for c in s).split())
+
+
+def name_words(name: str) -> list[str]:
+    """The distinctive words of a name, so "pay Rohan" traces to payee "Rohan Mehta"."""
+    return [w for w in skeleton(name).split() if len(w) >= 3 and w not in {"pvt", "ltd", "the", "services", "and"}]
 
 
 def normalise_account(acct: str) -> str:
-    s = re.sub(r"[\s-]", "", str(acct)).upper()
+    s = re.sub(r"[\s-]", "", canon(acct)).upper()
     return s if IBAN_RE.fullmatch(s) else re.sub(r"\D", "", s)
 
 
 def accounts_in(text: str) -> set[str]:
+    text = canon(text)
     found = {re.sub(r"\D", "", m) for m in ACCOUNT_RE.findall(text) if len(re.sub(r"\D", "", m)) >= 8}
+    found |= set(re.findall(r"\d{8,}", text))  # "A/c 777700001111222 30000" must still yield the account alone
     return found | {m.group(0).replace(" ", "") for m in IBAN_RE.finditer(text)}
 
 
-def amounts_in(text: str) -> set[float]:
+def amounts_in(text: str, marked_only: bool = False) -> set[float]:
+    """Every amount in the text; with marked_only, just those with a currency sign or a unit."""
     out = set()
-    for num, unit in AMOUNT_RE.findall(text):
-        try:
-            v = float(num.replace(",", ""))
-        except ValueError:
-            continue
-        unit = unit.lower()
-        if unit == "k":
-            v *= 1_000
-        elif unit in ("l", "lakh", "lakhs"):
-            v *= 100_000
-        out.add(round(v, 2))
+    for mark, num, unit in AMOUNT_RE.findall(canon(text)):
+        if not marked_only or mark or unit:
+            out.add(round(float(num.replace(",", "")) * UNITS.get(unit.lower(), 1), 2))
     return out
 
 
 @dataclass
 class Context:
     spans: list[Span] = field(default_factory=list)
+    mandates: Mandates = field(default_factory=lambda: _new_mandates())
 
     def add(self, text: str, label: Label, source: str, risk: float = 0.0) -> None:
         if text:
-            self.spans.append(Span(str(text), label, source, risk))
+            self.spans.append(Span(canon(text), label, source, risk))
 
     def _match(self, pred) -> list[Span]:
         return [s for s in self.spans if pred(s)]
@@ -109,3 +125,9 @@ class Context:
 
     def user_text(self) -> str:
         return "\n".join(s.text for s in self.spans if s.label == Label.USER)
+
+
+def _new_mandates() -> "Mandates":
+    from .mandate import Mandates  # mandate.py builds on the value parsers above
+
+    return Mandates()

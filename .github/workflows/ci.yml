@@ -15,7 +15,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -28,5 +28,7 @@ jobs:
       - run: bandit -q -r agentfw -ll
       - run: pip-audit -r requirements.lock --no-deps --disable-pip --progress-spinner off
       - run: pytest -q --cov --cov-report=term-missing:skip-covered
+      - run: python -m agentfw bench
+      - run: python -m agentfw redteam --sessions 5000 --out /tmp/redteam.json
       - if: always()
         run: coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY" || true

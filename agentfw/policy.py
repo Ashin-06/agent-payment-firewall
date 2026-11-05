@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import os
 import re
 import tomllib
 from dataclasses import dataclass, field
@@ -9,9 +10,13 @@ from enum import IntEnum
 from pathlib import Path
 
 from .bank import MONEY_TOOLS, READ_TOOLS, Bank
-from .provenance import Context, Label, skeleton
+from .mandate import Claim
+from .provenance import CONFUSABLES, IBAN_RE, Context, Label, canon, name_words, normalise_account, skeleton
 
-DEFAULT_POLICY = Path(__file__).resolve().parent.parent / "policy.toml"
+DEFAULT_POLICY = Path(__file__).with_name("policy.toml")
+_LONG_NUMBER = re.compile(r"\d(?:[ .\-]?\d){11,}")  # a card or account number, however it is spaced
+_DIGITS = re.compile(r"\d(?:[ .\-]?\d){5,}")
+_ENCODED = re.compile(r"[A-Za-z0-9+/_=\-]{16,}")
 
 
 class Action(IntEnum):
@@ -24,28 +29,27 @@ class Action(IntEnum):
 class Verdict:
     action: Action = Action.ALLOW
     reasons: list[str] = field(default_factory=list)
+    claim: Claim | None = None  # the customer's request this call spends
 
     def raise_to(self, action: Action, reason: str) -> None:
         self.action = max(self.action, action)
         self.reasons.append(f"[{action.name}] {reason}")
 
 
-def load_policy(path: str | Path = DEFAULT_POLICY) -> dict:
-    with open(path, "rb") as f:
+def load_policy(path: str | Path | None = None) -> dict:
+    with open(path or os.environ.get("AGENTFW_POLICY") or DEFAULT_POLICY, "rb") as f:
         return tomllib.load(f)
 
 
 class PolicyEngine:
     def __init__(self, policy: dict | None = None):
         self.p = policy or load_policy()
+        self.ttl = self.p["mandate"]["ttl_minutes"] * 60
 
     # --------------------------------------------------------------- helpers
 
     def _hostile(self, spans) -> list:
         return [s for s in spans if s.label == Label.UNTRUSTED and s.risk >= self.p["untrusted"]["hostile_score"]]
-
-    def _user_asked_to_pay_a_document(self, ctx: Context) -> bool:
-        return bool(re.search(r"\b(pay|settle|clear)\b.{0,40}\b(bill|invoice|dues?|statement)\b", ctx.user_text(), re.I | re.S))
 
     def _check_destination(self, v: Verdict, ctx: Context, name: str, account: str, who: str, new: bool = False) -> None:
         """For a saved payee the customer naming them is enough (the bank holds the
@@ -62,23 +66,36 @@ class PolicyEngine:
             v.raise_to(Action.DENY, f"{who} was named only by content flagged as an injection ({self._hostile(untrusted)[0].source})")
         elif any(s.label == Label.UNTRUSTED for s in by_acct):
             v.raise_to(Action.DENY, f"{who}'s account number came from third-party content, not from the customer")
+        elif new:  # refused, not held: money can't reach a new account even if someone approves everything
+            v.raise_to(Action.DENY, f"the customer never typed the account number for {who}")
         elif untrusted:
             v.raise_to(Action.APPROVE, f"{who} was suggested by third-party content ({untrusted[0].source}), not by the customer")
         else:
             v.raise_to(Action.APPROVE, f"the customer never mentioned {who}")
 
-    def _check_amount(self, v: Verdict, ctx: Context, amount: float) -> None:
+    def _spend(self, v: Verdict, claim: Claim) -> None:
+        v.claim = claim
+        if claim.caution:
+            v.raise_to(Action.APPROVE, claim.caution)
+
+    def _check_amount(self, v: Verdict, ctx: Context, bank: Bank, amount: float, name: str, others: list[str]) -> None:
+        """The payment must match something the customer asked for: this payee with this amount,
+        not yet used. Failing that, an amount from a bill the customer asked to pay, up to a limit."""
+        claim = ctx.mandates.claim(name, amount, others, bank.now, self.ttl)
+        if claim:
+            return self._spend(v, claim)
         spans = ctx.origins_of_amount(amount)
-        labels = ctx.labels(spans)
-        if Label.USER in labels:
-            return
-        if Label.UNTRUSTED in labels:
-            if self._hostile(spans):
-                v.raise_to(Action.DENY, f"amount ₹{amount:,.0f} comes from content flagged as an injection")
-            elif not (self._user_asked_to_pay_a_document(ctx) and amount <= self.p["untrusted"]["auto_pay_document_amount_max"]):
-                v.raise_to(Action.APPROVE, f"amount ₹{amount:,.0f} was taken from a document, not confirmed by the customer")
-            return
-        v.raise_to(Action.APPROVE, f"amount ₹{amount:,.0f} was not given by the customer")
+        if Label.UNTRUSTED not in ctx.labels(spans):
+            return v.raise_to(Action.APPROVE, f"the customer did not ask to pay ₹{amount:,.2f} to {name} "
+                                              "(one request authorises one payment, to that payee, at that amount)")
+        if self._hostile(spans):
+            return v.raise_to(Action.DENY, f"amount ₹{amount:,.0f} comes from content flagged as an injection")
+        words = set(name_words(name))
+        about_payee = any(s.label == Label.UNTRUSTED and words & set(skeleton(s.text).split()) for s in spans)
+        claim = ctx.mandates.claim_document(name, others, bank.now, self.ttl) if about_payee else None
+        if claim and amount <= self.p["untrusted"]["auto_pay_document_amount_max"]:
+            return self._spend(v, claim)
+        v.raise_to(Action.APPROVE, f"amount ₹{amount:,.0f} was taken from a document, not confirmed by the customer")
 
     def _check_limits(self, v: Verdict, bank: Bank, amount: float) -> None:
         lim = self.p["limits"]
@@ -97,25 +114,54 @@ class PolicyEngine:
         near = [t for t in window if lo <= t.amount <= hi] + ([amount] if lo <= amount <= hi else [])
         if len(near) >= lim["structuring_count"]:
             v.raise_to(Action.DENY, f"{len(near)} payments just under the confirmation threshold within {lim['structuring_window_minutes']} min (splitting to avoid checks)")
-        start, end = self.p["quiet_hours"]["start"], self.p["quiet_hours"]["end"]
-        hour_now = dt.datetime.fromtimestamp(bank.now).hour
-        if start <= hour_now < end:
+        q = self.p["quiet_hours"]
+        hour_now = dt.datetime.fromtimestamp(bank.now, dt.timezone(dt.timedelta(minutes=q["utc_offset_minutes"]))).hour
+        if q["start"] <= hour_now < q["end"]:
             v.raise_to(Action.APPROVE, f"money movement at {hour_now:02d}:00 falls in quiet hours")
 
     def _check_memo(self, v: Verdict, bank: Bank, ctx: Context, memo: str, from_document_ok: bool = False) -> None:
         if not memo:
             return
-        low = memo.casefold()
-        if any(re.search(rf"\b{re.escape(w)}\b", low) for w in self.p["memo"]["blocked_words"]):
+        memo = canon(memo)
+        low = skeleton(memo)
+        joined = re.sub(r"\b(\w) (?=\w\b)", r"\1", low)  # "o t p"
+        if any(re.search(rf"\b{re.escape(w)}\b(?! ?code)" if w == "pin" else rf"\b{re.escape(w)}\b", text)
+               for w in self.p["memo"]["blocked_words"] for text in (low, joined)):
             v.raise_to(Action.DENY, "memo mentions a credential (OTP/PIN/password): possible exfiltration")
         own = re.sub(r"\D", "", bank.account_number)
         digits = re.sub(r"\D", "", memo)
-        if own[-6:] in digits or re.search(r"\b\d{12,16}\b", memo):
+        if own[-6:] in digits or _LONG_NUMBER.search(memo):
             v.raise_to(Action.DENY, "memo carries an account or card number: possible exfiltration")
-        if not from_document_ok and Label.USER not in ctx.labels(ctx.origins_of_text(memo)) and Label.UNTRUSTED in ctx.labels(ctx.origins_of_text(memo)):
+        if from_document_ok:
+            return
+        origins = ctx.labels(ctx.origins_of_text(memo))
+        if Label.USER in origins:
+            return
+        if Label.UNTRUSTED in origins:
             v.raise_to(Action.APPROVE, "memo text was copied from third-party content")
+        if _DIGITS.search(memo) or any(re.search(r"\d", t) and re.search(r"[A-Za-z]", t) for t in _ENCODED.findall(memo)):
+            v.raise_to(Action.APPROVE, "memo carries a long number or encoded text the customer did not type")
 
-    # --------------------------------------------------------------- entry point
+    def _check_new_payee(self, v: Verdict, ctx: Context, bank: Bank, name: str, acct: str, ifsc: str) -> None:
+        for p in bank.payees.values():
+            same = skeleton(p.name) == skeleton(name) if skeleton(name) else p.name == name
+            if same and normalise_account(p.account_number) != normalise_account(acct):
+                kind = "look-alike of" if p.name != name else "same name as"
+                v.raise_to(Action.DENY, f"'{name}' is a {kind} existing payee '{p.name}' but with a different account")
+        if name != name.translate(CONFUSABLES):
+            v.raise_to(Action.APPROVE, "payee name uses non-Latin look-alike letters")
+        self._check_destination(v, ctx, name, acct, f"new payee '{name}'", new=True)
+        claim = ctx.mandates.claim_account(acct, name, bank.now, self.ttl)
+        if claim:
+            self._spend(v, claim)
+            v.reasons.append("[ALLOW] account number typed by the customer in a request")
+        elif v.action == Action.ALLOW:
+            v.raise_to(Action.APPROVE, "the customer typed this account number but did not ask to add it")
+        # the IFSC picks the bank: a number the customer typed at a branch a stranger chose is someone else's account
+        if not IBAN_RE.fullmatch(normalise_account(acct)) and not ctx.mandates.ifsc_typed(ifsc, bank.now, self.ttl):
+            v.raise_to(Action.APPROVE, f"IFSC {ifsc} was not typed by the customer")
+
+    # --------------------------------------------------------------- entry points
 
     def evaluate(self, tool: str, args: dict, ctx: Context, bank: Bank) -> Verdict:
         v = Verdict()
@@ -126,38 +172,40 @@ class PolicyEngine:
             return v
 
         if tool == "add_payee":
-            name, acct = str(args.get("name", "")), str(args.get("account_number", ""))
-            for p in bank.payees.values():
-                if skeleton(p.name) == skeleton(name) and re.sub(r"\D", "", p.account_number) != re.sub(r"\D", "", acct):
-                    kind = "look-alike of" if p.name != name else "same name as"
-                    v.raise_to(Action.DENY, f"'{name}' is a {kind} existing payee '{p.name}' but with a different account")
-            if name != re.sub(r"[^\x00-\x7f]", "", name) and skeleton(name) != name.casefold():
-                v.raise_to(Action.APPROVE, "payee name uses non-Latin look-alike letters")
-            self._check_destination(v, ctx, name, acct, f"new payee '{name}'", new=True)
-            if Label.USER in ctx.labels(ctx.origins_of_account(acct)):
-                v.reasons.append("[ALLOW] account number typed by the customer")
+            self._check_new_payee(v, ctx, bank, str(args["name"]), str(args["account_number"]), str(args["ifsc"]))
             return v
 
-        amount = float(args.get("amount", 0))
+        amount = float(args["amount"])
         if tool == "transfer":
-            p = bank.payees.get(str(args.get("payee_id")))
+            p = bank.payees.get(str(args["payee_id"]))
             if p is None:
-                v.raise_to(Action.DENY, f"unknown payee id {args.get('payee_id')!r}")
+                v.raise_to(Action.DENY, f"unknown payee id {args['payee_id']!r}")
                 return v
             self._check_destination(v, ctx, p.name, p.account_number, f"payee '{p.name}'")
             age_h = (bank.now - p.added_at) / 3600
             np = self.p["new_payee"]
             if age_h < np["cooldown_hours"] and amount > np["cooldown_max_without_approval"]:
                 v.raise_to(Action.APPROVE, f"payee was added {age_h:.1f} h ago; first payments above ₹{np['cooldown_max_without_approval']:,} need confirmation")
-            self._check_memo(v, bank, ctx, str(args.get("memo", "")))
+            self._check_memo(v, bank, ctx, str(args["memo"]))
+            name, others = p.name, [q.name for q in bank.payees.values() if q.payee_id != p.payee_id]
         else:  # pay_bill
-            biller, ref = str(args.get("biller", "")), str(args.get("reference", "")).strip()
-            if biller not in bank.billers:
-                v.raise_to(Action.DENY, f"'{biller}' is not a registered biller")
-            elif ref != bank.billers[biller]:
-                v.raise_to(Action.APPROVE, f"consumer number {ref!r} is not the customer's registered number with {biller} (paying someone else's bill)")
+            name, ref = str(args["biller"]), str(args["reference"]).strip()
+            if name not in bank.billers:
+                v.raise_to(Action.DENY, f"'{name}' is not a registered biller")
+            elif ref != bank.billers[name]:
+                v.raise_to(Action.APPROVE, f"consumer number {ref!r} is not the customer's registered number with {name} (paying someone else's bill)")
             # bill references naturally come from the bill itself
             self._check_memo(v, bank, ctx, ref, from_document_ok=True)
-        self._check_amount(v, ctx, amount)
+            others = [b for b in bank.billers if b != name]
+        self._check_amount(v, ctx, bank, amount, name, others)
         self._check_limits(v, bank, amount)
+        return v
+
+    def recheck(self, tool: str, args: dict, bank: Bank) -> Verdict:
+        """Hard limits again at execution: other approvals may have run since this one was held."""
+        v = Verdict()
+        if tool in MONEY_TOOLS:
+            self._check_limits(v, bank, float(args["amount"]))
+            v.reasons = [r for r in v.reasons if r.startswith("[DENY]")]
+            v.action = Action.DENY if v.reasons else Action.ALLOW
         return v

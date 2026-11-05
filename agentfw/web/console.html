@@ -25,7 +25,8 @@
   .me { align-self:flex-end; background:var(--accent); color:#fff; }
   .bot { align-self:flex-start; background:var(--code); }
   .step { font:12px/1.4 ui-monospace,Consolas,monospace; color:var(--muted); align-self:flex-start; }
-  .step b.executed { color:var(--ok); } .step b.held { color:var(--warn); } .step b.denied, .step b.error { color:var(--bad); }
+  .step { overflow-wrap:anywhere; }
+  .step b.executed { color:var(--ok); } .step b.held { color:var(--warn); } .step b.denied, .step b.error, .step b.unknown { color:var(--bad); }
   form { display:flex; gap:8px; margin-top:10px; }
   input[type=text] { flex:1; padding:9px 11px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--ink); font:inherit; }
   button { font:inherit; font-weight:600; padding:8px 14px; border:0; border-radius:8px; background:var(--accent); color:#fff; cursor:pointer; }
@@ -33,7 +34,8 @@
   button.deny { background:var(--bad); } button.approve { background:var(--ok); }
   .side { display:flex; flex-direction:column; gap:16px; }
   .pending { border:1px solid var(--warn); border-radius:8px; padding:10px; margin-bottom:8px; }
-  .pending code { background:var(--code); padding:1px 5px; border-radius:4px; }
+  .what { font-weight:600; margin-bottom:4px; overflow-wrap:anywhere; }
+  .frozen { background:var(--bad); color:#fff; padding:10px 20px; display:none; gap:12px; align-items:center; flex-wrap:wrap; }
   .reason { color:var(--muted); font-size:13px; }
   table { width:100%; border-collapse:collapse; font-size:13px; }
   td, th { text-align:left; padding:4px 6px; border-bottom:1px solid var(--line); }
@@ -48,12 +50,13 @@
   <label class="toggle"><input type="checkbox" id="enforce" checked> firewall on</label>
   <button class="secondary" id="reset">Reset demo account</button>
 </header>
+<div class="frozen" id="frozen" role="alert"><span id="frozen-why"></span><button class="secondary" id="reconcile">I've checked the account</button></div>
 <main>
   <section class="card">
     <h2>Assistant</h2>
     <div id="log"></div>
     <form id="chat"><input type="text" id="input" placeholder="e.g. Please pay the Acme Interiors invoice INV-2291 in my documents." autocomplete="off"><button>Send</button></form>
-    <p class="hint">Try the poisoned documents: inv-2291, email-rent, email-kyc, email-cfo, web-cashback, msg-rohan. Turn the firewall off and reset to compare.</p>
+    <p class="hint">Try the poisoned documents: inv-2291, email-rent, email-kyc, email-cfo, web-cashback, msg-rohan. Turn the firewall off and reset to compare. With no assistant key set, type <code>replay A01</code> (A01 to A28, B01 to B22) to replay a scenario.</p>
   </section>
   <div class="side">
     <section class="card"><h2>Waiting for your approval</h2><div id="pending"><p class="reason">Nothing pending.</p></div></section>
@@ -80,9 +83,11 @@ async function refresh() {
   const s = await sr.json();
   if (!sr.ok) { $("pending").innerHTML = `<p class="reason">${esc(s.detail)}</p>`; return; }
   $("enforce").checked = s.enforce;
+  $("frozen").style.display = s.frozen ? "flex" : "none";
+  $("frozen-why").textContent = s.frozen ? "Money movement is frozen: " + s.frozen : "";
   $("pending").innerHTML = s.pending.length ? s.pending.map((p) => `
-    <div class="pending"><div><code>${esc(p.tool)}</code> ${esc(JSON.stringify(p.args))}</div>
-      ${p.reasons.map((r) => `<div class="reason">${esc(r)}</div>`).join("")}
+    <div class="pending"><div class="what">${esc(p.summary || (p.tool + " " + JSON.stringify(p.args)))}</div>
+      ${p.reasons.map((r) => `<div class="reason">${esc(r.replace(/^\[\w+\]\s*/, ""))}</div>`).join("")}
       <div style="margin-top:8px;display:flex;gap:8px"><button class="approve" data-id="${p.id}" data-ok="1">Approve</button><button class="deny" data-id="${p.id}" data-ok="0">Decline</button></div>
     </div>`).join("") : '<p class="reason">Nothing pending.</p>';
   $("account").innerHTML = `<p><strong>${inr(s.balance.balance)}</strong> available</p>
@@ -124,6 +129,7 @@ async function doReset() {
   $("log").innerHTML = "";
   refresh();
 }
+$("reconcile").addEventListener("click", async () => { await api("/api/reconcile", { method: "POST" }); refresh(); });
 $("reset").addEventListener("click", doReset);
 $("enforce").addEventListener("change", doReset);
 refresh();

@@ -38,6 +38,7 @@ class Pending:
     created: float = field(default_factory=time.time)
     status: str = "pending"  # pending | approved | denied | executed | expired
     decided_by: str | None = None
+    summary: str = ""  # what the approver is shown, with the real recipient
 
 
 class ApprovalQueue:
@@ -45,20 +46,20 @@ class ApprovalQueue:
         self.db = engine or db.connect("sqlite://")
         self.ttl = ttl
 
-    def submit(self, tool: str, args: dict, reasons: list[str]) -> Pending:
-        p = Pending(f"APR-{secrets.token_hex(4).upper()}", tool, dict(args), list(reasons), call_hash(tool, args))
+    def submit(self, tool: str, args: dict, reasons: list[str], summary: str = "") -> Pending:
+        p = Pending(f"APR-{secrets.token_hex(4).upper()}", tool, dict(args), list(reasons), call_hash(tool, args), summary=summary)
         with self.db.begin() as c:
-            c.execute(text("INSERT INTO approvals (id, tool, args, reasons, digest, created_at, status) "
-                           "VALUES (:id, :tool, :args, :reasons, :digest, :created, 'pending')"),
+            c.execute(text("INSERT INTO approvals (id, tool, args, reasons, digest, created_at, status, summary) "
+                           "VALUES (:id, :tool, :args, :reasons, :digest, :created, 'pending', :summary)"),
                       {"id": p.id, "tool": tool, "args": json.dumps(p.args, default=str), "reasons": json.dumps(p.reasons),
-                       "digest": p.digest, "created": int(p.created)})
+                       "digest": p.digest, "created": int(p.created), "summary": summary})
         return p
 
     def get(self, pid: str) -> Pending | None:
         with self.db.connect() as c:
-            r = c.execute(text("SELECT id, tool, args, reasons, digest, created_at, status, decided_by FROM approvals "
+            r = c.execute(text("SELECT id, tool, args, reasons, digest, created_at, status, decided_by, summary FROM approvals "
                                "WHERE id = :id"), {"id": pid}).first()
-        return None if r is None else Pending(r[0], r[1], json.loads(r[2]), json.loads(r[3]), r[4], float(r[5]), r[6], r[7])
+        return None if r is None else Pending(r[0], r[1], json.loads(r[2]), json.loads(r[3]), r[4], float(r[5]), r[6], r[7], r[8] or "")
 
     def _update(self, sql: str, **params) -> bool:
         """Run one conditional UPDATE; True if it changed the row (nobody got there first)."""
@@ -87,10 +88,15 @@ class ApprovalQueue:
             raise PermissionError("no approved request with that id")
         raise PermissionError("call differs from what the customer approved")
 
+    def fail(self, pid: str) -> None:
+        """An approved call that can no longer run (a limit was reached since it was held)."""
+        self._update("UPDATE approvals SET status = 'denied' WHERE id = :id AND status = 'approved'", id=pid)
+
     def pending(self) -> list[Pending]:
+        """Open requests. Lapsed ones aren't offered: nobody should see a button that can only fail."""
         with self.db.connect() as c:
             ids = [r[0] for r in c.execute(text("SELECT id FROM approvals WHERE status = 'pending' ORDER BY created_at, id"))]
-        return [p for p in map(self.get, ids) if p]
+        return [p for p in map(self.get, ids) if p and time.time() - p.created <= self.ttl]
 
     def expire_pending(self) -> None:
         """Retire every open request (the demo console's reset); nothing is deleted."""

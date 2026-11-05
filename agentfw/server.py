@@ -8,7 +8,6 @@ the database; the account itself and the conversation's provenance labels are in
 from __future__ import annotations
 
 import logging
-import os
 import re
 import threading
 from pathlib import Path
@@ -18,24 +17,24 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from . import db, ops
-from .agent import LLMAgent
+from .agent import make_agent, provider
 from .approval import ApprovalQueue
 from .audit import AuditLog
 from .bank import Bank
 from .bench import SCENARIOS
 from .gateway import Gateway
 
-ROOT = Path(__file__).resolve().parent.parent
+WEB = Path(__file__).with_name("web")
 log = logging.getLogger("agentfw.server")
 
 settings = ops.load_settings()
 ops.setup_logging(settings.log_level)
-if settings.production and not os.environ.get("ANTHROPIC_API_KEY"):
-    raise ops.ConfigError("production needs ANTHROPIC_API_KEY for the assistant")
+if settings.production and not provider():
+    raise ops.ConfigError("production needs ANTHROPIC_API_KEY or GOOGLE_API_KEY for the assistant")
 store = db.connect(settings.database_url)
 audit_log = AuditLog(store, key=settings.secret["AUDIT_KEY"], previous_keys=settings.previous["AUDIT_KEY"])
 approvals = ApprovalQueue(store)
-app = FastAPI(title="Agent Payment Firewall", version="1.0.0")
+app = FastAPI(title="Agent Payment Firewall", version="1.1.0")
 ops.install(app, settings, {"database": lambda: store.connect().close()})
 _lock = threading.Lock()
 state: dict = {}
@@ -68,14 +67,14 @@ class ResetIn(BaseModel):
 
 @app.get("/")
 def index():
-    return FileResponse(ROOT / "web" / "console.html")
+    return FileResponse(WEB / "console.html")
 
 
 SCENARIO_ID = re.compile(r"\b([AB]\d{2})\b", re.I)
 
 
 def offline_reply(message: str) -> dict:
-    """Without an API key there is no assistant. The console can still replay one of the
+    """Without credentials there is no assistant. The console can still replay one of the
     benchmark scenarios when the message names it explicitly ("replay A01")."""
     from .agent import TraceAgent
 
@@ -83,7 +82,7 @@ def offline_reply(message: str) -> dict:
     scenario = next((sc for sc in SCENARIOS if m and sc.id == m.group(1).upper()), None)
     if scenario is None:
         ids = ", ".join(sc.id for sc in SCENARIOS)
-        raise HTTPException(503, "No ANTHROPIC_API_KEY is set, so the assistant is offline. "
+        raise HTTPException(503, "No GOOGLE_API_KEY or ANTHROPIC_API_KEY is set, so the assistant is offline. "
                                  f"Type 'replay <id>' to replay a benchmark scenario instead ({ids}).")
     state["bank"].documents.update(scenario.docs)
     res = TraceAgent(state["gw"]).run(" ".join(scenario.user), scenario.trace)
@@ -95,11 +94,11 @@ def offline_reply(message: str) -> dict:
 @app.post("/api/chat")
 def chat(body: ChatIn, ident: dict = Depends(ops.require("chat"))):
     with _lock:
-        if not os.environ.get("ANTHROPIC_API_KEY"):
+        if not provider():
             return offline_reply(body.message)
         if state["agent"] is None:
             try:
-                state["agent"] = LLMAgent(state["gw"])
+                state["agent"] = make_agent(state["gw"])
             except Exception as e:  # missing credentials, SDK not installed
                 log.warning("assistant unavailable", exc_info=True)
                 raise HTTPException(503, "assistant unavailable") from e
@@ -107,7 +106,7 @@ def chat(body: ChatIn, ident: dict = Depends(ops.require("chat"))):
             res = state["agent"].run(body.message)
         except TypeError as e:  # the SDK raises this when no API key / auth token is configured
             state["agent"] = None
-            raise HTTPException(503, "assistant unavailable: no Anthropic credentials found (set ANTHROPIC_API_KEY)") from e
+            raise HTTPException(503, "assistant unavailable: no credentials found (set GOOGLE_API_KEY or ANTHROPIC_API_KEY)") from e
     return {"reply": res.text, "steps": [s.__dict__ for s in res.steps]}
 
 
@@ -116,11 +115,12 @@ def get_state(ident: dict = Depends(ops.require("chat"))):
     b, gw = state["bank"], state["gw"]
     return {
         "enforce": state["enforce"],
+        "frozen": gw.frozen,
         "balance": b.get_balance(),
         "payees": b.list_payees(),
         "ledger": b.get_statement(15),
         "documents": b.list_documents(),
-        "pending": [{"id": p.id, "tool": p.tool, "args": p.args, "reasons": p.reasons} for p in gw.approvals.pending()],
+        "pending": [{"id": p.id, "tool": p.tool, "args": p.args, "summary": p.summary, "reasons": p.reasons} for p in gw.approvals.pending()],
     }
 
 
@@ -138,8 +138,19 @@ def decide(pid: str, body: DecisionIn, ident: dict = Depends(ops.require("approv
         gw.audit.append("approval_decision", approval_id=pid, approved=body.approve, by=who)
         if not body.approve:
             return {"status": "denied"}
-        out = gw.execute_approved(pid)
+        try:
+            out = gw.execute_approved(pid)
+        except PermissionError as e:  # another replica got there first
+            raise HTTPException(409, str(e)) from e
     return {"status": out.status, "output": out.output}
+
+
+@app.post("/api/reconcile")
+def reconcile(ident: dict = Depends(ops.require("approve"))):
+    """A person has checked the account after an unknown outcome; money may move again."""
+    with _lock:
+        state["gw"].reconcile(ident["user"] or "customer (console)")
+    return {"frozen": None}
 
 
 @app.get("/api/audit")

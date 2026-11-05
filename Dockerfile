@@ -12,8 +12,6 @@ RUN useradd --system --uid 10001 --no-create-home app && mkdir /data && chown ap
 COPY --from=build /opt/venv /opt/venv
 WORKDIR /app
 COPY agentfw agentfw
-COPY web web
-COPY policy.toml ./
 USER app
 VOLUME /data
 EXPOSE 8004

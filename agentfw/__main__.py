@@ -1,6 +1,7 @@
 """Command line.
 
     python -m agentfw bench [--live] [--only A01 B02]
+    python -m agentfw redteam [--sessions 20000] [--seed 7]
     python -m agentfw chat "Pay the Acme invoice inv-2291" [--no-firewall]
     python -m agentfw scan path/to/email.txt
     python -m agentfw realdata --gandalf DIR --deepset DIR --agentdojo agentdojo_banking.json
@@ -28,8 +29,13 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
     b = sub.add_parser("bench", help="attack/utility benchmark")
     b.add_argument("--live", action="store_true", help="drive a real LLM assistant instead of fixed traces")
+    b.add_argument("--plain-prompt", action="store_true", help="with --live: an assistant with no security instructions in its prompt")
     b.add_argument("--only", nargs="*")
     b.add_argument("--json")
+    t = sub.add_parser("redteam", help="exploit suite, randomized attack sessions checked by an independent oracle, layer ablation")
+    t.add_argument("--sessions", type=int, default=20000)
+    t.add_argument("--seed", type=int, default=7)
+    t.add_argument("--out", default="results/redteam.json")
     c = sub.add_parser("chat", help="one request to the LLM assistant through the firewall")
     c.add_argument("message")
     c.add_argument("--no-firewall", action="store_true")
@@ -47,10 +53,18 @@ def main(argv=None):
     a = ap.parse_args(argv)
 
     if a.cmd == "bench":
-        rows = run(live=a.live, ids=a.only)
+        if a.live:
+            from .agent import provider
+
+            if not provider():
+                sys.exit("bench --live needs GOOGLE_API_KEY or ANTHROPIC_API_KEY")
+        try:
+            rows = run(live=a.live, ids=a.only, plain_prompt=a.plain_prompt)
+        except RuntimeError as e:
+            sys.exit(f"benchmark stopped, no result written: {e}")
         for r in rows:
             if r["kind"] == "attack":
-                print(f"{r['id']}  {r['title'][:62]:62s}  no firewall: {r['without_firewall']:9s}  firewall: {r['with_firewall']}")
+                print(f"{r['id']}  {r['title'][:62]:62s}  no firewall: {r['without_firewall']:9s}  firewall: {r['with_firewall']} ({r['stopped_by']})")
             else:
                 mark = "ok" if r["ok"] else "UNEXPECTED"
                 print(f"{r['id']}  {r['title'][:62]:62s}  firewall: {r['with_firewall']:8s} (expected {r['expected']}) {mark}")
@@ -59,25 +73,39 @@ def main(argv=None):
         s = summary(rows)
         print(f"\nattack success: {s['attack_success_without_firewall']:.0%} without firewall -> {s['attack_success_with_firewall']:.0%} with firewall"
               f"  ({s['attacks']} attacks)")
+        print(f"stopped by: {s['stopped_outright']} refused outright, {s['stopped_by_hold']} held for the customer, "
+              f"{s['stopped_by_neutralising']} defused before the model read them")
         print(f"benign tasks: {s['benign_blocked']:.0%} wrongly blocked, {s['benign_held']:.0%} held for confirmation, "
               f"{s['benign_as_expected']:.0%} as expected  ({s['benign']} tasks)")
         if a.json:
-            Path(a.json).write_text(json.dumps({"rows": rows, "summary": s}, indent=2, ensure_ascii=False), encoding="utf-8")
-    elif a.cmd == "chat":
-        from .agent import LLMAgent
+            from .agent import GEMINI_MODEL, MODEL, provider
 
+            model = (GEMINI_MODEL if provider() == "gemini" else MODEL) if a.live else "fixed traces of a fully compromised assistant"
+            Path(a.json).write_text(json.dumps({"assistant": model, "prompt": "plain" if a.plain_prompt else "hardened", "rows": rows, "summary": s}, indent=2, ensure_ascii=False), encoding="utf-8")
+    elif a.cmd == "redteam":
+        from .redteam import main as redteam
+
+        sys.exit(redteam(a.sessions, a.seed, a.out))
+    elif a.cmd == "chat":
+        from .agent import make_agent, provider
+
+        if not provider():
+            sys.exit("no assistant credentials: set GOOGLE_API_KEY or ANTHROPIC_API_KEY")
         bank = Bank.demo()
         for sc in sorted(SCENARIOS, key=lambda s: s.kind != "benign"):  # poisoned versions win shared ids
             bank.documents.update(sc.docs)
         gw = Gateway(bank, enforce=not a.no_firewall)
-        res = LLMAgent(gw).run(a.message)
+        res = make_agent(gw).run(a.message)
         for st in res.steps:
             print(f"  {st.tool} {json.dumps(st.args, ensure_ascii=False)} -> {st.status}")
         print("\n" + res.text)
         for p in gw.approvals.pending():
             print(f"\npending approval {p.id}: {p.tool} {p.args}\n  " + "\n  ".join(p.reasons))
     elif a.cmd == "scan":
-        r = scan(open(a.file, encoding="utf-8").read())
+        try:
+            r = scan(Path(a.file).read_text(encoding="utf-8", errors="replace"))
+        except OSError as e:
+            sys.exit(f"cannot read {a.file}: {e.strerror}")
         print(f"injection score {r.score:.1f} ({r.level})")
         for f in r.findings:
             print(f"  - {f.kind} (+{f.weight}): {f.excerpt}")
@@ -102,8 +130,10 @@ def main(argv=None):
             settings = ops.load_settings()  # fail here, before uvicorn, with a readable message
         except ops.ConfigError as e:
             sys.exit(f"configuration error: {e}")
-        if settings.production and not os.environ.get("ANTHROPIC_API_KEY"):
-            sys.exit("configuration error: production needs ANTHROPIC_API_KEY for the assistant")
+        from .agent import provider
+
+        if settings.production and not provider():
+            sys.exit("configuration error: production needs ANTHROPIC_API_KEY or GOOGLE_API_KEY for the assistant")
         ops.setup_logging(settings.log_level)
         uvicorn.run("agentfw.server:app", host=settings.host, port=settings.port, log_config=None, access_log=False)
 

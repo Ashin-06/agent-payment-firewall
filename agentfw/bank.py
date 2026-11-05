@@ -6,6 +6,7 @@ statements and the customer's inbox/documents, manage payees, move money, pay bi
 from __future__ import annotations
 
 import copy
+import math
 import time
 from dataclasses import dataclass, field
 
@@ -80,6 +81,9 @@ class Bank:
         return [{"days_ago": round((self.now - t.ts) / 86400, 1), "kind": t.kind, "amount": t.amount,
                  "counterparty": t.counterparty, "memo": t.memo} for t in self.ledger[-limit:][::-1]]
 
+    def list_billers(self) -> list[dict]:
+        return [{"biller": name, "consumer_number": ref} for name, ref in self.billers.items()]
+
     def read_document(self, doc_id: str) -> str:
         if doc_id not in self.documents:
             raise KeyError(f"no document {doc_id}")
@@ -89,19 +93,25 @@ class Bank:
         return sorted(self.documents)
 
     def add_payee(self, name: str, account_number: str, ifsc: str) -> dict:
+        if not name.strip() or not str(account_number).strip():
+            raise ValueError("a payee needs a name and an account number")
         pid = f"P{len(self.payees) + 1}"
         while pid in self.payees:
             pid = f"P{int(pid[1:]) + 1}"
         self.payees[pid] = Payee(pid, name.strip(), str(account_number).strip(), ifsc.strip().upper(), self.now)
         return {"payee_id": pid, "status": "added"}
 
+    def _debit(self, amount: float) -> float:
+        amount = float(amount)
+        if not math.isfinite(amount) or amount <= 0 or amount > self.balance:
+            raise ValueError("invalid amount or insufficient balance")
+        self.balance = round(self.balance - amount, 2)
+        return amount
+
     def transfer(self, payee_id: str, amount: float, memo: str = "") -> dict:
         if payee_id not in self.payees:
             raise KeyError(f"unknown payee {payee_id}")
-        amount = float(amount)
-        if amount <= 0 or amount > self.balance:
-            raise ValueError("invalid amount or insufficient balance")
-        self.balance -= amount
+        amount = self._debit(amount)
         p = self.payees[payee_id]
         self.ledger.append(Txn(self.now, "transfer", amount, p.name, memo, p.account_number))
         return {"status": "completed", "to": p.name, "account_number": p.account_number, "amount": amount, "reference": f"IMPS{len(self.ledger):06d}"}
@@ -109,10 +119,7 @@ class Bank:
     def pay_bill(self, biller: str, amount: float, reference: str) -> dict:
         if biller not in self.billers:
             raise KeyError(f"unknown biller {biller}")
-        amount = float(amount)
-        if amount <= 0 or amount > self.balance:
-            raise ValueError("invalid amount or insufficient balance")
-        self.balance -= amount
+        amount = self._debit(amount)
         self.ledger.append(Txn(self.now, "bill", amount, biller, reference))
         return {"status": "paid", "biller": biller, "amount": amount, "reference": reference}
 
@@ -121,6 +128,8 @@ TOOL_SPECS = [
     {"name": "get_balance", "description": "Current balance of the customer's savings account.",
      "input_schema": {"type": "object", "properties": {}, "additionalProperties": False}},
     {"name": "list_payees", "description": "Saved payees (beneficiaries) with their ids and account numbers.",
+     "input_schema": {"type": "object", "properties": {}, "additionalProperties": False}},
+    {"name": "list_billers", "description": "Registered billers with the customer's consumer number. pay_bill needs the exact biller name from here.",
      "input_schema": {"type": "object", "properties": {}, "additionalProperties": False}},
     {"name": "get_statement", "description": "Most recent transactions, newest first.",
      "input_schema": {"type": "object", "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 50}},
@@ -137,11 +146,11 @@ TOOL_SPECS = [
      "input_schema": {"type": "object", "properties": {"payee_id": {"type": "string"}, "amount": {"type": "number"},
                                                        "memo": {"type": "string"}},
                       "required": ["payee_id", "amount", "memo"], "additionalProperties": False}},
-    {"name": "pay_bill", "description": "Pay a registered biller.",
+    {"name": "pay_bill", "description": "Pay a registered biller. Use the exact name and consumer number from list_billers.",
      "input_schema": {"type": "object", "properties": {"biller": {"type": "string"}, "amount": {"type": "number"},
                                                        "reference": {"type": "string"}},
                       "required": ["biller", "amount", "reference"], "additionalProperties": False}},
 ]
 
-READ_TOOLS = {"get_balance", "list_payees", "get_statement", "list_documents", "read_document"}
+READ_TOOLS = {"get_balance", "list_payees", "list_billers", "get_statement", "list_documents", "read_document"}
 MONEY_TOOLS = {"transfer", "pay_bill"}

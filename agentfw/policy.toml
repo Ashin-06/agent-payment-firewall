@@ -21,8 +21,18 @@ auto_pay_document_amount_max = 10000
 hostile_score = 4.0
 
 [memo]
-blocked_words = ["otp", "pin", "cvv", "password", "passcode", "upi pin"]
+blocked_words = ["otp", "pin", "cvv", "password", "passcode", "upi pin", "one time password", "one time code",
+                 "verification code", "secret", "aadhaar"]
 
 [quiet_hours]
 start = 0                          # local hour, inclusive
 end = 5                            # exclusive; money movement inside needs approval
+utc_offset_minutes = 330           # the bank's clock, so results don't depend on the server's timezone
+
+[mandate]
+ttl_minutes = 30                   # what the customer asked for lapses after this long
+paste_score = 3.0                  # a customer message scoring this high is treated as pasted third-party text
+
+[breaker]
+max_refused_per_turn = 5           # refused or held calls before the assistant is stopped until the customer speaks
+max_pending_approvals = 5          # open requests before new ones are refused, so nobody is flooded into approving
