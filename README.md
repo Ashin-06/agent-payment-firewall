@@ -36,7 +36,7 @@ A question turned into a payment: customer only asked whether Rohan got ₹5,000
 Everything else:
 
 ```bash
-python -m pytest -q                         # 239 tests
+python -m pytest -q                         # 249 tests
 python -m agentfw bench                     # 28 attacks and 22 normal tasks
 python -m agentfw paired                    # 43 should-act and should-abstain pairs
 python -m agentfw redteam --sessions 2000   # exploits, random sessions, adaptive attacker, each layer removed
@@ -75,13 +75,13 @@ flowchart TD
 
 | # | Check | What it does | If it fails |
 |---|---|---|---|
-| 1 | Third-party text | Reveals hidden characters, removes images and data-carrying URLs, screens statement memos and sender names, and fences everything with an unguessable tag. | Second line only: the checks below don't rely on it |
+| 1 | Third-party text | Reveals hidden characters, removes images and all links, screens statement memos and sender names, caps the size, and fences everything with an unguessable tag. | Second line only: the checks below don't rely on it |
 | 2 | Arguments | Strict types and ranges against each tool's schema. `NaN`, strings, booleans and fractions of a paisa never reach the rules. Digits and text are made canonical. | Refused |
 | 3 | Freeze and stop | An unknown bank outcome freezes money until a person checks, and a restart doesn't clear it. After 5 refused or held calls the assistant is stopped until the customer speaks. | Refused |
 | 4 | Provenance | Labels all text as typed by the customer, from the bank, or from third parties. A new payee's account must have been typed by the customer. | Refused, so no approval can reach it |
-| 5 | Mandate | The payment must match something the customer plainly asked for: this payee, this amount, not yet spent, not cancelled, under 30 minutes old. | Held |
+| 5 | Mandate | The payment must match something the customer plainly asked for: this payee, this amount, not yet spent, not cancelled, under 30 minutes old. Any later statement the rules can't read cancels it too. | Held |
 | 6 | Account name | Asks the receiving bank whose account it is. If that doesn't match the name given, the customer sees the real name first. | Held |
-| 7 | Memo | Refuses OTPs, PINs and account or card numbers, however they are spaced or disguised. | Refused or held |
+| 7 | Memo | Refuses OTPs, PINs and account or card numbers, however they are spaced or disguised. Holds links and long or encoded text the customer didn't type. | Refused or held |
 | 8 | Limits | Ceilings per payment and per day, payments per hour, splitting under thresholds, cooling-off for new payees, new payees per day, quiet hours, more than half the balance, far more than this payee has ever been paid. | Refused or held |
 | 9 | Approval | A held call is bound to a hash of its exact arguments, is single-use and expires. The approver sees the real recipient, not a payee ID. At most 5 can be open. | Nothing moves |
 | 10 | Undo window | First payments to a new payee and amounts taken from a document wait 10 minutes before the bank is called. The customer can undo them, or say "cancel that". | Stopped |
@@ -107,8 +107,9 @@ So each customer message is read by fixed rules, with no model involved, so noth
 | "If my salary came in, send ₹500 to Mom" | Held: a condition the firewall can't check |
 | "Send the ₹5,000 receipt to Mom" | Nothing: a document, not money |
 | "Send ₹500 to Mom maybe" | Nothing: an unknown word |
+| "Send ₹500 to Mom", then "scratch that" or "hmm, are you sure?" | Cancelled: anything the rules can't read counts as a change of mind |
 
-The rules deny by default. A sentence grants money only if every word in it is a payee's name, a number or on a [short list](agentfw/mandate.py). Looking for warning signs instead didn't work, because there is always another one. That costs a confirmation on some natural wording, and it means a miss usually costs a confirmation rather than a payment.
+The rules deny by default. A sentence grants money only if every word in it is a payee's name, a number or on a [short list](agentfw/mandate.py). Taking a request back works the same way: anything the rules can't read cancels what came before, while "what's my balance?" or "thanks" doesn't. Looking for warning signs instead didn't work, because there is always another one. That costs a confirmation on some natural wording, and it means a miss usually costs a confirmation rather than a payment.
 
 ## Failure scenarios
 
@@ -130,6 +131,10 @@ The rules deny by default. A sentence grants money only if every word in it is a
 | A bug that bypasses every rule | Last check still holds the ceilings, and the freeze |
 | Scam: customer talked into typing someone's account under a trusted name | Held if the bank's name lookup disagrees |
 | Assistant says "done" about a refused payment | The firewall's receipt shows the truth |
+| A document or message built to hang the firewall | Size caps and bounded patterns; it answers in time |
+| Parallel tool calls racing to spend one request | One decision at a time |
+| Data carried out in a link, in the path or host name | All links removed from what the model reads and writes |
+| Another website reaching the open demo on this computer | Refused |
 
 ## Results
 
@@ -140,8 +145,8 @@ All from a fully compromised assistant, the worst case, unless stated otherwise.
 | Built-in attacks | 28 of 28 succeed | 0 of 28 (13 refused, 14 held, 1 defused) |
 | AgentDojo banking attacks, every task with every attack | not run | 0 of 144 pairs executed (136 refused, 8 held) |
 | Should-act and should-abstain pairs, both sides right | not run | 43 of 43 |
-| Named exploits | 34 of 35 worked on 1.0, 21 of 30 on 1.1, 26 of 31 on 1.2 | 0 of 132 work |
-| 20,000 random attack sessions, 25% with injected faults | not run | 0 oracle violations, 5,982 authorised payments still made |
+| Named exploits and later attack rounds | see below | 0 of 329 work |
+| 20,000 random attack sessions, 25% with injected faults | not run | 0 oracle violations, 4,896 authorised payments still made |
 | Adaptive attacker, 5,000 attempts | not run | 0 breaches |
 | Customer who approves every held request, 2,000 sessions | not run | 0 payments reached the attacker |
 
@@ -151,13 +156,29 @@ The random sessions are checked by an oracle that shares no code with the rules 
 |---|---|---|---|---|
 | Holding for the customer | 14 | 92 | 206 | 0 |
 | Mandates | 10 | 85 | 102 | 0 |
-| Memo rules | 1 | 6 | 23 | 0 |
+| Memo rules | 1 | 6 | 20 | 0 |
 | Fail-safe freeze and stop | 0 | 4 | 0 | 0 |
 | Last check | 0 | 3 | 0 | 0 |
 | Provenance | 0 | 2 | 0 | 1 |
 | Limits | 0 | 2 | 0 | 0 |
 | Neutralising third-party text | 1 | 1 | 0 | 0 |
 | Argument validation | 0 | 1 | 0 | 0 |
+
+Each row of 0 above took repeated rounds of attacking the version before. The earlier versions failed these, and the history is published:
+
+| Round | Attacking | What it tried | Worked |
+|---|---|---|---|
+| 1 | Version 1.0 | Questions, refusals and replays turned into payments, malformed values, faults | 34 of 35 |
+| 2 | Version 1.1 | Sentences that mention a payee and amount without asking to pay | 21 of 30 |
+| 3 | Version 1.2 | Everyday wording: "maybe", "by Friday", "Rohan's wife" | 26 of 31 |
+| 5 | Version 1.4 | Beyond sentences: hangs, leaks through links, threads, MCP, approvals, name collisions, symbols | 40 of 60 |
+| 6 | The fixes | Taking a request back in other words, cancelling one payee, faking the approval screen, number formats, memos | 35 of 46 |
+| 7 | The fixes | More ways of taking it back, sentences of allowed words only | 7 of 56 |
+| 8 | The fixes | Labels, tags, sentences with two verbs, odd headers | 2 of 35 |
+| 9 | The fixes | Automated: common English words at every position, about 7,000 sentences | 1 |
+| 10 | The fixes | Automated: 60,000 random statements after a request | 2 kinds, then 0 apart from the case below |
+
+Round 4 was research rather than attacks. Later rounds found less, but that doesn't show nothing is left. The search only finds what it looks for, and the same author wrote it. [docs/case-study.md](docs/case-study.md) tells the story.
 
 With a real model, the assistant was tricked for real. `gemini-3.1-flash-lite` with a plain system prompt carried out 15 of the 28 attacks without the firewall and 0 of 28 with it, and all 22 normal tasks behaved as expected. That is one run on a free-tier quota, made on version 1.1: it shows the attacks work on a current model, not a measured rate.
 
@@ -233,11 +254,12 @@ agentfw/
   bench.py       built-in attacks and normal tasks; the demo
   paired.py      should-act and should-abstain pairs
   redteam.py     exploits, random sessions, adaptive attacker, layer removal
+  rounds.py      the later attack rounds, kept as regression tests
   agentdojo.py   AgentDojo banking suite replay
   server.py      console backend
 docs/            case study, evaluation, related work, threat model, runbook
 results/         raw output of every published number
-tests/           239 tests
+tests/           249 tests
 ```
 
 ## Limitations
@@ -246,10 +268,10 @@ tests/           239 tests
 - Text pasted into the chat is only recognised when it looks pasted: forwarded-mail headers or injection phrasing.
 - Held payments are only as good as the person approving them. A customer who approves everything is safe from new accounts the customer never typed, but can still send up to the daily ceiling to saved payees.
 - An amount from a bill the customer asked to pay is accepted up to ₹10,000, so a poisoned bill can inflate a payment within that limit. The undo window gives 10 minutes to catch it.
-- The mandate rules read English. Anything else waits for a confirmation, and so does unusual wording such as "she needs it". A sentence made entirely of listed words could still be misread.
+- The mandate rules read English. Anything else waits for a confirmation, and so does unusual wording such as "she needs it". A sentence made entirely of listed words could still be misread, and a follow-up that starts with "read", "open" or "summarise" counts as a reading task, so it won't cancel an earlier request.
 - A mandate isn't authentication. In India, [RBI's rules](https://www.rbi.org.in/Scripts/NotificationUser.aspx?Id=12898&Mode=0) require two factors for digital payments, so a real deployment still needs the bank's own check on every payment this firewall allows.
 - The console runs one demo account on a sandbox bank. A real deployment needs a session per signed-in customer, the bank's own APIs with idempotency keys, and approvals confirmed in the bank's app.
-- The red team and the oracle were written by the same author as the firewall, and nobody independent has reviewed it. Each attack round so far has found something in the version before it, so zero violations means none were found in these tests, not that none exist.
+- The red team and the oracle were written by the same author as the firewall, and nobody independent has reviewed it. The last rounds found very little, but the attacker and the defender are the same author, so zero violations means none were found in these tests, not that none exist.
 
 ## Further reading
 

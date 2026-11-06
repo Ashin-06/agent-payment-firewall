@@ -2,6 +2,28 @@
 
 All notable changes to this project. Versions follow [semantic versioning](https://semver.org/).
 
+## 1.5.0 — 2026-11-07
+
+Rounds 5 to 10 of attacking the project. Round 5 alone: 40 of 60 worked on 1.4.0. The attacks are kept in `agentfw/rounds.py`.
+
+### Changed
+- Taking a request back is deny by default: any later statement the rules can't read cancels what came before, including "scratch that" and "are you sure?". Reading tasks, questions about the account and "thanks" don't.
+- Ruling out one payee also withdraws what is already held or scheduled for them.
+- All links are now removed from what the model reads and writes. Only the query was before, so the path or host name could carry data out.
+- Memos the assistant writes itself are held if long, encoded or carrying a link.
+
+### Fixed
+- Three inputs could hang the service; patterns are bounded and text sizes capped. A huge document no longer slows every later call.
+- A payee whose name is an ordinary word could be paid: "Will you send ₹500 to Mom?" named Will Smith, and "pay my bill" named Bill Gates. A payee sharing a word with a biller is now ambiguous.
+- Symbols changed nothing: "₹500+", "~₹500", "₹500-600" and a joke emoji all granted money. "₹12,50" was read as ₹1,250.
+- An approved payment still went out after a cancel, and an expired approval could still run.
+- The approval screen could be faked with brackets or a line break in a payee's name.
+- A scam account written with leading zeros or spaces got past the account-name check.
+- Another website could reach the open demo on this computer.
+- The MCP server could be stopped by a malformed message, and its clock never moved, so undo windows never ended.
+- The default audit log had no key, and the receipt could crash on junk arguments.
+- Decisions now run one at a time, so parallel tool calls can't race.
+
 ## 1.4.0 — 2026-11-06
 
 Added after reviewing published work and asking what the rules still couldn't see. See [docs/related-work.md](docs/related-work.md).

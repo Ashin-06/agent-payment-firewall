@@ -11,6 +11,7 @@ import secrets
 import unicodedata
 from dataclasses import dataclass, field
 
+MAX_SCAN = 50_000  # what is read of any one text: a stranger shouldn't be able to slow every later call
 ZERO_WIDTH = re.compile("[\u200b-\u200f\u2060-\u2064\ufeff\u00ad]")
 BIDI = re.compile("[\u202a-\u202e\u2066-\u2069]")
 TAG_BLOCK = re.compile("[\U000e0000-\U000e007f]+")
@@ -25,7 +26,7 @@ PATTERNS: list[tuple[str, float, re.Pattern]] = [
         r"\b(reveal|disclose|print|show|repeat|recite|list|output|tell me|what (are|were|is))\b.{0,30}"
         r"\b(your|the|my|all|previous|prior|original|initial|system|last)\b.{0,20}\b(instructions?|prompt|directives?|guidelines)\b", re.I | re.S)),
     ("role hijack", 2.5, re.compile(r"\b(you are now|act as|new instructions?|system prompt|developer mode|as an ai)\b", re.I)),
-    ("fake chat/system markup", 2.5, re.compile(r"(<\s*/?\s*(system|assistant|instructions?|admin)\s*>|^\s*(system|assistant)\s*:|\[\s*(system|inst)\s*\])", re.I | re.M)),
+    ("fake chat/system markup", 2.5, re.compile(r"(<\s{0,5}/?\s{0,5}(system|assistant|instructions?|admin)\s{0,5}>|^[ \t]{0,20}(system|assistant)[ \t]{0,5}:|\[\s{0,5}(system|inst)\s{0,5}\])", re.I | re.M)),
     ("payment imperative", 2.0, re.compile(r"\b(transfer|send|wire|remit|pay)\b.{0,40}(₹|rs\.?|inr|\d[\d,]{3,}).{0,60}\b(to|into)\b.{0,30}(account|a/c|beneficiary|payee|\d{9,})", re.I | re.S)),
     ("beneficiary change", 2.0, re.compile(r"\b(new|updated|changed?|revised)\b.{0,30}\b(bank (account|details)|account (number|details)|beneficiary|ifsc)\b", re.I | re.S)),
     ("tool steering", 2.0, re.compile(r"\b(add_payee|transfer|pay_bill|get_balance|list_payees)\s*\(|\bcall the\b.{0,20}\btool\b", re.I)),
@@ -33,8 +34,8 @@ PATTERNS: list[tuple[str, float, re.Pattern]] = [
     ("urgency", 1.0, re.compile(r"\b(urgent(ly)?|immediately|right away|within \d+ (minutes|hours)|before (5|five) ?pm|account will be (blocked|suspended))\b", re.I)),
     ("credential/secret request", 2.5, re.compile(r"\b(otp|one[- ]time password|pin|cvv|password|upi pin|full card number)\b.{0,40}\b(memo|reference|reply|send|include|share)\b|\b(include|share|send)\b.{0,40}\b(otp|pin|cvv|password|account number)\b", re.I | re.S)),
     ("split to evade limits", 2.0, re.compile(r"\b(split|break)\b.{0,30}\b(into|in)\b.{0,10}\d+\b.{0,30}\b(transfers?|payments?|parts?)\b", re.I | re.S)),
-    ("markdown exfiltration", 3.0, re.compile(r"!\[[^\]]*\]\(\s*https?://[^)]*[?&][^)]*\)", re.I)),
-    ("html beacon", 3.0, re.compile(r"<\s*(img|iframe|script)\b[^>]*\bsrc\s*=", re.I)),
+    ("markdown exfiltration", 3.0, re.compile(r"!\[[^\]\n]{0,300}\]\(\s{0,5}https?://[^)\n]{0,2000}[?&][^)\n]{0,2000}\)", re.I)),
+    ("html beacon", 3.0, re.compile(r"<\s{0,5}(img|iframe|script)\b[^>\n]{0,500}\bsrc\s{0,5}=", re.I)),
     ("hidden html", 2.0, re.compile(r"(display\s*:\s*none|font-size\s*:\s*0|color\s*:\s*(#fff(fff)?|white)|visibility\s*:\s*hidden|<!--)", re.I)),
     ("encoded payload", 1.5, re.compile(r"\b[A-Za-z0-9+/]{48,}={0,2}")),
 ]
@@ -74,6 +75,7 @@ def mixed_script_words(text: str) -> list[str]:
 
 
 def scan(text: str) -> Scan:
+    text = text[:MAX_SCAN]
     findings = []
     if ZERO_WIDTH.search(text):
         findings.append(Finding("zero-width characters", 2.0, f"{len(ZERO_WIDTH.findall(text))} invisible characters"))
@@ -94,18 +96,24 @@ def scan(text: str) -> Scan:
     return Scan(score, findings, visible)
 
 
-_MARKDOWN_IMAGE = re.compile(r"!\[([^\]]*)\]\s*(?:\([^)]*\)|\[[^\]]*\])")
-_ACTIVE_HTML = re.compile(r"<\s*(img|iframe|script|link|object|embed|video|audio|source|style|meta)\b[^>]*>?", re.I)
-_URL_QUERY = re.compile(r"\b(https?://[^\s<>\"')\]]*?)[?#][^\s<>\"')\]]*", re.I)
-_FENCE = re.compile(r"<\s*/?\s*untrusted", re.I)
+_MARKDOWN_IMAGE = re.compile(r"!\[([^\]\n]{0,300})\]\s{0,5}(?:\([^)\n]{0,2000}\)|\[[^\]\n]{0,300}\])")
+_MARKDOWN_LINK = re.compile(r"\[([^\]\n]{0,300})\]\s{0,5}\([^)\n]{0,2000}\)")
+_REFERENCE = re.compile(r"^\s{0,5}\[[^\]\n]{0,300}\]:\s{0,5}\S{1,2000}.{0,200}$", re.M)
+_ACTIVE_HTML = re.compile(r"<\s{0,5}(a|img|iframe|script|link|object|embed|video|audio|source|style|meta|form|base)\b[^>\n]{0,2000}>?", re.I)
+# A link carries data anywhere: the query, the path, even the host name. So none get through.
+URL = re.compile(r"\b(?:https?|ftp|sftp|file|data|javascript|mailto|ws|wss)://?[^\s<>\"']{0,2000}|\b(?:data|javascript|mailto):[^\s<>\"']{1,2000}|(?<![\w:/])//[\w\-]{1,63}\.[^\s<>\"']{1,2000}"
+                 r"|\bwww\.[^\s<>\"']{1,2000}|\b[\w\-]{1,63}(?:\.[\w\-]{1,63}){0,5}\.[a-z]{2,24}[/?#][^\s<>\"']{0,2000}", re.I)
+_FENCE = re.compile(r"<\s{0,5}/?\s{0,5}untrusted", re.I)
 
 
 def defuse(text: str) -> str:
-    """Nothing that loads by itself and nothing that carries data out in a URL. Applied to what the
-    model reads and to what it writes back, since a rendered reply is a way out too."""
+    """Nothing that loads by itself and no links, in what the model reads and in what it writes back,
+    since a rendered reply is a way out too."""
     text = _MARKDOWN_IMAGE.sub(lambda m: f"[image removed: {m.group(1)}]", text)
+    text = _MARKDOWN_LINK.sub(lambda m: f"{m.group(1)} [link removed]", text)
+    text = _REFERENCE.sub("[link removed]", text)
     text = _ACTIVE_HTML.sub("[active content removed]", text)
-    return _URL_QUERY.sub(r"\1[query removed]", text)
+    return URL.sub("[link removed]", text)
 
 
 def fence(body: str, source: str, level: str = "low", extra: str = "") -> str:

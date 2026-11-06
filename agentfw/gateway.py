@@ -15,21 +15,36 @@ retry, and a retried payment that had in fact gone through is a double payment n
 """
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import math
+import secrets
+import threading
+import time
+import unicodedata
 from dataclasses import dataclass
 
 from .approval import ApprovalQueue, Pending, call_hash
 from .audit import AuditLog
 from .bank import READ_TOOLS, TOOL_SPECS, Bank
-from .detector import fence, neutralise, scan
+from .detector import defuse, fence, neutralise, scan
 from .policy import Action, PolicyEngine, Verdict
-from .provenance import IBAN_RE, IFSC_RE, Context, Label, canon, normalise_account
+from .provenance import IBAN_RE, IFSC_RE, Context, Label, canon, name_words, normalise_account, skeleton
 
 log = logging.getLogger("agentfw.gateway")
 SPECS = {t["name"]: t["input_schema"] for t in TOOL_SPECS}
 MAX_TEXT = 200
+MAX_DOCUMENT = 50_000  # what the model is shown of one document
+
+
+def _locked(method):
+    """One decision at a time. Frameworks run parallel tool calls in threads, and a request must not be spent twice."""
+    @functools.wraps(method)
+    def locked(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return locked
 RECEIPT_WORDS = {"executed": "Done", "scheduled": "Scheduled, can still be undone", "held": "Waiting for your approval", "denied": "Refused",
                  "error": "Failed, nothing sent", "unknown": "Unknown: check your account"}
 
@@ -52,6 +67,8 @@ def validate(tool: str, args: object) -> dict:
         if kind == "string":
             if not isinstance(value, str) or len(value) > MAX_TEXT:
                 raise BadArguments(f"{key} must be text of at most {MAX_TEXT} characters")
+            if any(unicodedata.category(c) == "Cc" for c in value):  # a line break in a name or memo can fake a line on the approval screen
+                raise BadArguments(f"{key} must not contain control characters")
             out[key] = canon(value).strip()
         elif isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
             raise BadArguments(f"{key} must be a finite number")
@@ -67,8 +84,8 @@ def validate(tool: str, args: object) -> dict:
         acct = normalise_account(out["account_number"])
         if not IBAN_RE.fullmatch(acct) and not (acct.isdecimal() and 8 <= len(acct) <= 18 and acct == "".join(c for c in out["account_number"] if c not in " -")):
             raise BadArguments("account_number must be 8 to 18 digits, or an IBAN")
-        if not out["name"]:
-            raise BadArguments("name must not be empty")
+        if not out["name"] or not all(unicodedata.category(c)[0] in "LMN" or c in " .'&-" for c in out["name"]):
+            raise BadArguments("name must be letters, numbers and ordinary name punctuation")  # no brackets to fake "(account ...)" with
         out["ifsc"] = out["ifsc"].upper()
         if not IBAN_RE.fullmatch(acct) and not IFSC_RE.fullmatch(out["ifsc"]):
             raise BadArguments("ifsc is not a valid IFSC")
@@ -116,7 +133,8 @@ class Gateway:
                  approvals: ApprovalQueue | None = None, enforce: bool = True):
         self.bank = bank
         self.policy = policy or PolicyEngine()
-        self.audit = audit or AuditLog()
+        self.audit = audit or AuditLog(key=secrets.token_bytes(32))  # never unkeyed: anyone could rebuild the chain
+        self._lock = threading.RLock()
         self.approvals = approvals or ApprovalQueue()
         self.enforce = enforce  # False = passthrough baseline for benchmarking
         self.ctx = Context()
@@ -126,21 +144,30 @@ class Gateway:
         if enforce:  # scheduled payments survive a restart, and still count against the limits
             self.ctx.reserved = {p.id: float(p.args["amount"]) for p in self.approvals.scheduled()}
 
+    @_locked
     def user_message(self, text: str) -> None:
         self.ctx.add(text, Label.USER, "customer")
         self.audit.append("user_message", text=text)
         self.refused = 0
-        suspect = scan(text).score >= self.policy.p["mandate"]["paste_score"]
+        suspect = scan(text[:MAX_DOCUMENT]).score >= self.policy.p["mandate"]["paste_score"]
         names = [p.name for p in self.bank.payees.values()] + list(self.bank.billers)
         if self.ctx.mandates.add(text, self.bank.now, names, suspect):  # "cancel that": held requests go too
             for pid in self.held:
                 try:
                     self.approvals.decide(pid, False, "customer cancelled in chat")
                 except (KeyError, ValueError):
-                    pass  # already decided or expired
+                    self.approvals.fail(pid)  # approved but not yet run: the cancel still counts
             self.held = []
             for p in self.approvals.scheduled():
                 self.undo(p.id, "customer cancelled in chat")
+        for name in self.ctx.mandates.vetoed:  # "don't pay Rohan" reaches what is already waiting for Rohan
+            words = set(name_words(name))
+            for p in self.approvals.pending():
+                if words & set(skeleton(p.summary).split()):
+                    self.approvals.decide(p.id, False, "customer ruled this payee out in chat")
+            for p in self.approvals.scheduled():
+                if words & set(skeleton(p.summary).split()):
+                    self.undo(p.id, "customer ruled this payee out in chat")
 
     @property
     def halted(self) -> bool:
@@ -149,6 +176,7 @@ class Gateway:
 
     # ----------------------------------------------------------------- calls
 
+    @_locked
     def call(self, tool: str, args: dict) -> Outcome:
         try:
             return self._call(tool, args)
@@ -219,6 +247,7 @@ class Gateway:
             return f"Add payee {args['name']}, account {args['account_number']}, IFSC {args['ifsc'] or 'n/a'}"
         return f"{tool} {json.dumps(args, default=str)}"
 
+    @_locked
     def execute_approved(self, approval_id: str) -> Outcome:
         p: Pending | None = self.approvals.get(approval_id)
         if p is None:
@@ -245,6 +274,8 @@ class Gateway:
             return None
         if self.frozen:
             return f"money movement is frozen: {self.frozen}"
+        if p.status == "approved" and time.time() - p.created > self.approvals.ttl:
+            return "this approval has expired"
         if p.summary and p.summary != self.describe(p.tool, p.args):
             return "the payment no longer matches what was approved"
         v = self.policy.recheck(p.tool, p.args, self.bank, sum(self.ctx.reserved.values()))
@@ -271,6 +302,7 @@ class Gateway:
         self.ctx.reserved[p.id] = float(args["amount"])
         return self._scheduled_outcome(p.id, why, verdict)
 
+    @_locked
     def undo(self, pid: str, who: str) -> bool:
         """Stop a scheduled payment. False if it has already gone out or doesn't exist."""
         if not self.approvals.undo(pid, who):
@@ -279,6 +311,7 @@ class Gateway:
         self._note("undone", approval_id=pid, by=who)
         return True
 
+    @_locked
     def settle_due(self) -> list[Outcome]:
         """Send what has waited out its window, checking everything again first. Nothing goes while frozen."""
         if not self.enforce:
@@ -306,8 +339,11 @@ class Gateway:
         including "done" for a payment that was refused, so this goes to the customer beside it."""
         lines = []
         for step in steps:
-            if step.tool in SPECS and step.tool not in READ_TOOLS:
-                what = self.describe(step.tool, step.args) if isinstance(step.args, dict) and "amount" in step.args or step.tool == "add_payee" else step.tool
+            if isinstance(step.tool, str) and step.tool in SPECS and step.tool not in READ_TOOLS:
+                try:
+                    what = self.describe(step.tool, step.args)
+                except (KeyError, TypeError, ValueError, AttributeError):  # the model's arguments were junk
+                    what = f"{step.tool} with invalid details"
                 lines.append(f"{RECEIPT_WORDS.get(step.status, step.status)}: {what}")
         return "\n".join(lines)
 
@@ -316,6 +352,7 @@ class Gateway:
         self.bank.now += self._window() + 1
         return self.settle_due()
 
+    @_locked
     def reconcile(self, who: str) -> None:
         """A person has checked the account after an unknown outcome; money may move again."""
         self.audit.append("reconciled", by=who, was=self.frozen)
@@ -362,6 +399,8 @@ class Gateway:
             return Outcome("error", f"ERROR: {e}")
         if tool == "read_document":
             source = f"document:{args.get('doc_id')}"
+            if self.enforce:
+                result = str(result)[:MAX_DOCUMENT]
             text, s = neutralise(result, source) if self.enforce else (result, None)
             self.ctx.add(s.clean_text if s else result, Label.UNTRUSTED, source, s.score if s else 0.0)
             self.audit.append("read", tool=tool, args=args, source=source,
@@ -393,6 +432,7 @@ class Gateway:
                     continue
                 _, s = neutralise(row[key], source)
                 self.ctx.add(s.clean_text, Label.UNTRUSTED, source, s.score)
+                row[key] = defuse(row[key])
                 if s.findings:
                     row[key] = f"[{key} withheld: suspicious content ({', '.join(f.kind for f in s.findings)})]"
         bank_view = [{k: ("" if k == "counterparty" and r["kind"] == "credit" else v) for k, v in r.items() if k != "memo"} for r in rows]

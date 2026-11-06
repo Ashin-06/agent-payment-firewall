@@ -38,7 +38,13 @@ Version 1.2 fixed those. Then a third round tried 31 everyday sentences, and 26 
 
 That result showed the design was wrong, not just incomplete. The parser granted authority unless it spotted a warning sign, and warning signs have no end. Version 1.3 turns this around: a sentence grants money only if every word in it is a payee's name, a number or on a short list. One unknown word and the payment waits for a person. A miss now costs a confirmation in the common case. Natural sentences such as "My mom needs ₹500, send it to her" pay that cost.
 
-A fourth pass then asked what the rules still couldn't see, using published research rather than more attacks of the same kind. It added the undo window, the independent last check, the account-name check and the firewall's own receipt, described below. 17 more exploits were written against those additions and the parser, and all are stopped.
+A fourth pass then asked what the rules still couldn't see, using published research rather than more attacks of the same kind. It added the undo window, the independent last check, the account-name check and the firewall's own receipt, described below. 17 more exploits were written against those additions.
+
+That wasn't the end either. Round 5 went beyond sentences and 40 of 60 attacks worked on version 1.4. Three inputs hung the firewall. Replies could carry the account number out in a link. A payee called Will Smith could be paid from "Will you send ₹500 to Mom?". An approved payment still went out after the customer cancelled. Another website could clear a freeze on the open demo.
+
+Round 6 found the same design mistake a second time: 35 of 46 worked, including "scratch that" and "I changed my mind" not cancelling anything, because only a list of words did. So taking a request back also became deny by default: anything the rules can't read cancels what came before.
+
+After that the numbers fell quickly. Rounds 7 and 8 found 7 and 2. Rounds 9 and 10 were automated, so they weren't limited to what the author thought of: common English words at every position in plain requests, and 60,000 random statements after a request. They found a few narrow cases, now fixed. This doesn't show nothing is left. It's as far as attacking one's own work can go, and the next step is someone else.
 
 ## The approach
 
@@ -69,7 +75,7 @@ See [related-work.md](related-work.md). Binding an approval to exact parameters 
 
 ## Evidence
 
-Numbers, method and commands are in [evaluation.md](evaluation.md). In short: 0 of 28 built-in attacks, 0 of 144 AgentDojo task and attack pairs executed, 43 of 43 should-act and should-abstain pairs, 0 of 132 exploits, 0 breaches from an adaptive attacker, and 0 oracle violations in 20,000 randomized sessions with injected faults, while 5,982 authorised payments still went through.
+Numbers, method and commands are in [evaluation.md](evaluation.md). In short: 0 of 28 built-in attacks, 0 of 144 AgentDojo task and attack pairs executed, 43 of 43 should-act and should-abstain pairs, 0 of 329 exploits and later-round attacks, 0 breaches from an adaptive attacker, and 0 oracle violations in 20,000 randomized sessions with injected faults, while 4,896 authorised payments still went through.
 
 Removing each layer in turn shows what it does:
 
@@ -77,7 +83,7 @@ Removing each layer in turn shows what it does:
 |---|---|---|---|---|
 | Holding for the customer | 14 | 92 | 206 | 0 |
 | Mandates | 10 | 85 | 102 | 0 |
-| Memo rules | 1 | 6 | 23 | 0 |
+| Memo rules | 1 | 6 | 20 | 0 |
 | Fail-safe freeze and stop | 0 | 4 | 0 | 0 |
 | Last check | 0 | 3 | 0 | 0 |
 | Provenance | 0 | 2 | 0 | 1 |

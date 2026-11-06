@@ -20,8 +20,10 @@ from __future__ import annotations
 
 import importlib
 import json
+import logging
 import os
 import sys
+import time
 
 from . import db, ops
 from .approval import ApprovalQueue
@@ -44,7 +46,7 @@ def _bank() -> Bank:
 def handle(gw: Gateway, method: str, params: dict) -> dict:
     if method == "initialize":
         return {"protocolVersion": params.get("protocolVersion", VERSION), "capabilities": {"tools": {}},
-                "serverInfo": {"name": "agent-payment-firewall", "version": "1.4.0"}}
+                "serverInfo": {"name": "agent-payment-firewall", "version": "1.5.0"}}
     if method == "ping":
         return {}
     if method == "tools/list":
@@ -67,25 +69,41 @@ def handle(gw: Gateway, method: str, params: dict) -> dict:
     if method == "agentfw/reconcile":
         gw.reconcile(str(params.get("by", "customer")))
         return {"frozen": None}
-    raise LookupError(method)
+    raise LookupError("no such method")
+
+
+def keep_time(gw: Gateway, started: float, at: float) -> None:
+    """A bank object's clock doesn't run by itself, and undo windows and lapsed requests depend on it."""
+    gw.bank.now = at + time.time() - started
+    gw.settle_due()
 
 
 def serve(gw: Gateway, lines, write) -> None:
+    started, at = time.time(), gw.bank.now
     for line in lines:
+        keep_time(gw, started, at)
         try:
             msg = json.loads(line)
-        except json.JSONDecodeError:
+        except (ValueError, RecursionError):
             write({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}})
             continue
         if not isinstance(msg, dict) or "id" not in msg:
             continue  # notifications need no reply
         reply = {"jsonrpc": "2.0", "id": msg["id"]}
+        params = msg.get("params") or {}
         try:
-            reply["result"] = handle(gw, str(msg.get("method")), msg.get("params") or {})
+            if not isinstance(params, dict):
+                raise TypeError("params must be an object")
+            reply["result"] = handle(gw, str(msg.get("method")), params)
+        except KeyError as e:
+            reply["error"] = {"code": -32602, "message": f"missing or unknown: {str(e)[:100]}"}
         except LookupError:
             reply["error"] = {"code": -32601, "message": "method not found"}
         except (ValueError, TypeError, PermissionError) as e:
             reply["error"] = {"code": -32602, "message": str(e)[:200]}
+        except Exception:  # one bad message must not take the firewall down
+            logging.getLogger("agentfw.mcp").exception("request failed")
+            reply["error"] = {"code": -32603, "message": "internal error"}
         write(reply)
 
 
@@ -95,7 +113,7 @@ def main() -> None:
     audit = AuditLog(store, key=settings.secret["AUDIT_KEY"], previous_keys=settings.previous["AUDIT_KEY"])
     gw = Gateway(_bank(), audit=audit, approvals=ApprovalQueue(store))
     gw.frozen = audit.unresolved()
-    sys.stdin.reconfigure(encoding="utf-8")
+    sys.stdin.reconfigure(encoding="utf-8", errors="replace")
 
     def write(obj: dict) -> None:
         sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")

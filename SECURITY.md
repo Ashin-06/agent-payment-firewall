@@ -14,8 +14,8 @@ disclosing it, and don't test against anyone else's deployment.
 
 | Version | Supported |
 |---|---|
-| 1.4.x | yes |
-| 1.1.x to 1.3.x | no: see the changelog for what they let through |
+| 1.5.x | yes |
+| 1.1.x to 1.4.x | no: see the changelog for what they let through |
 | 1.0.x | no: see the changelog for what it let through |
 | < 1.0 | no (prototype releases) |
 

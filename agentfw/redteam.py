@@ -1073,6 +1073,13 @@ def main(sessions: int, seed: int, out: str) -> int:
     print(f"exploits: {len(exploits) - len(worked)} of {len(exploits)} stopped")
     for k, v in worked.items():
         print(f"  WORKED {k}: {v}")
+    from .rounds import run_rounds
+
+    rounds = run_rounds()
+    round_hits = {k: v for k, v in rounds.items() if v}
+    print(f"later attack rounds: {len(rounds) - len(round_hits)} of {len(rounds)} stopped")
+    for k, v in round_hits.items():
+        print(f"  WORKED {k}: {v}")
     print(f"randomized attack sessions: {sessions:,} (seed {seed}) ...", flush=True)
     f = fuzz(sessions, seed)
     print(f"  violations: {f['violations']}; tool calls: {sum(v for k, v in f['tool_calls'].items() if k not in ('sessions_with_faults', 'payments_made')):,}; "
@@ -1102,7 +1109,8 @@ def main(sessions: int, seed: int, out: str) -> int:
               f"{r['oracle_violations_in_300_sessions']:3d}/300 sessions, {r['attacker_payments_if_customer_approves_everything']:3d} attacker payments if all approved")
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     Path(out).write_text(json.dumps({"exploits": {"total": len(exploits), "stopped": len(exploits) - len(worked), "names": sorted(exploits), "worked": worked},
+                                     "later_rounds": {"total": len(rounds), "stopped": len(rounds) - len(round_hits), "names": sorted(rounds), "worked": round_hits},
                                      "randomized": f, "honest_assistant": h, "harder_wording": p, "customer_approves_everything": a, "adaptive": d, "ablation": rows},
                                     indent=2, ensure_ascii=False, default=str), encoding="utf-8")
     logging.disable(logging.NOTSET)
-    return 1 if worked or d["breaches"] or f["violations"] or f["payments_without_a_prior_record"] or not f["audit_chain_ok"] else 0
+    return 1 if worked or round_hits or d["breaches"] or f["violations"] or f["payments_without_a_prior_record"] or not f["audit_chain_ok"] else 0

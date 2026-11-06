@@ -1,6 +1,6 @@
 # Threat model
 
-What the firewall protects, from whom, and what is still open. Written for the 1.4.0 code; it
+What the firewall protects, from whom, and what is still open. Written for the 1.5.0 code; it
 has not been reviewed by anyone independent.
 
 ## What it protects
@@ -58,6 +58,10 @@ documents, emails, statement memos (third parties) ──────┘        
 | Many new payees added quickly | At most 2 a day; more are refused | Counted on this account's payee list |
 | Model tells the customer something untrue about a payment | The gateway's receipt appears beside the reply | The customer has to read it. Hosts using the Python API or MCP must show it themselves |
 | Model authorising itself over MCP | Customer messages and approvals are separate methods, not tools; the model can only cause `tools/call` | A host that lets the model choose method names defeats this |
+| A document or message built to slow or hang the service | Bounded patterns; text over 50,000 characters is cut, messages over 4,000 grant nothing; old conversation data is dropped | Per process; the service-level limits still apply |
+| Data carried out in a link's path or host name | All links removed from what the model reads and writes, and held in memos | Plain text the customer reads in the reply |
+| Parallel tool calls racing to spend one request | One decision at a time within a gateway | Several replicas of one conversation aren't supported |
+| Another website or a rebinding DNS name reaching the open demo | With no API keys, requests naming another host or origin are refused | Doesn't apply with keys, which a browser page can't send |
 | Stolen API key | Per-client keys, roles, rate limit per key, the approver's user recorded in the audit | Works until removed from the key list and the service restarts |
 | One customer acting on another's account | — | **Not handled**: the console drives one shared demo account. Per-customer sessions from the bank's identity provider are required |
 | Oversized or flooding requests | 64 KB body cap, 4,000-character messages, per-client token bucket, at most 12 model turns per message | Per process; put a shared limiter at the ingress |

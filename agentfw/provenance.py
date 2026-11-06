@@ -30,13 +30,18 @@ class Span:
     label: Label
     source: str
     risk: float = 0.0  # injection score of this span (untrusted only)
+    accounts: set[str] = field(default_factory=set)  # worked out once, when the text arrives
+    amounts: set[float] = field(default_factory=set)
+    words: set[str] = field(default_factory=set)
+    plain: str = ""
 
 
 ACCOUNT_RE = re.compile(r"\d[\d \-]{6,22}\d")
 # IBANs carry letters in the bank code (GB29 NWBK 6016...), so they are compared whole, not as digits
 IBAN_RE = re.compile(r"\b[A-Z]{2}\d{2}(?:[A-Z0-9]{10,30}|(?: [A-Z0-9]{4}){2,7}(?: [A-Z0-9]{1,4})?)\b")  # compact or in fours
 # the left boundary keeps "INV-2291" and "A/c 12" from counting as amounts
-AMOUNT_RE = re.compile(r"(?<![\w\-/.,$€£])(₹\s*|(?:rs\.?|inr)\s*)?(\d{1,3}(?:,\d{2,3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*(k|l|lakhs?|thousand|hundred|crores?|cr)?\b(?!\s*%)", re.I)
+AMOUNT_RE = re.compile(r"(?<![\w\-/.,$€£])(₹\s*|(?:rs\.?|inr)\s*)?(\d{1,3}(?:,\d{2})*,\d{3}(?:\.\d+)?|\d+(?:\.\d+)?)(?!,\d)\s*(k|l|lakhs?|thousand|hundred|crores?|cr)?\b(?!\s*%)", re.I)
+MAX_SPAN, MAX_SPANS = 50_000, 500
 IFSC_RE = re.compile(r"\b[A-Z]{4}0[A-Z0-9]{6}\b")
 UNITS = {"k": 1_000, "thousand": 1_000, "hundred": 100, "l": 100_000, "lakh": 100_000, "lakhs": 100_000,
          "cr": 10_000_000, "crore": 10_000_000, "crores": 10_000_000}
@@ -95,18 +100,21 @@ class Context:
 
     def add(self, text: str, label: Label, source: str, risk: float = 0.0) -> None:
         if text:
-            self.spans.append(Span(canon(text), label, source, risk))
+            text = canon(text)[:MAX_SPAN]
+            plain = skeleton(text)
+            self.spans.append(Span(text, label, source, risk, accounts_in(text), amounts_in(text), set(plain.split()), plain))
+            del self.spans[:-MAX_SPANS]  # the oldest go first: forgetting only ever means more is held
 
     def _match(self, pred) -> list[Span]:
         return [s for s in self.spans if pred(s)]
 
     def origins_of_account(self, acct: str) -> list[Span]:
         a = normalise_account(acct)
-        return self._match(lambda s: a in accounts_in(s.text))
+        return self._match(lambda s: a in s.accounts)
 
     def origins_of_amount(self, amount: float) -> list[Span]:
         a = round(float(amount), 2)
-        return self._match(lambda s: a in amounts_in(s.text))
+        return self._match(lambda s: a in s.amounts)
 
     def origins_of_name(self, name: str) -> list[Span]:
         """Name mentioned in a span. Matches on any distinctive word of the name so
@@ -118,7 +126,7 @@ class Context:
 
     def origins_of_text(self, value: str) -> list[Span]:
         v = skeleton(value)
-        return self._match(lambda s: v and v in skeleton(s.text)) if len(v) >= 4 else []
+        return self._match(lambda s: v and v in s.plain) if len(v) >= 4 else []
 
     @staticmethod
     def labels(spans: list[Span]) -> set[Label]:

@@ -10,13 +10,14 @@ from enum import IntEnum
 from pathlib import Path
 
 from .bank import MONEY_TOOLS, READ_TOOLS, Bank
+from .detector import URL
 from .mandate import Claim
 from .provenance import CONFUSABLES, IBAN_RE, Context, Label, canon, name_words, normalise_account, skeleton
 
 DEFAULT_POLICY = Path(__file__).with_name("policy.toml")
 _LONG_NUMBER = re.compile(r"\d(?:[ .\-]?\d){11,}")  # a card or account number, however it is spaced
 _DIGITS = re.compile(r"\d(?:[ .\-]?\d){5,}")
-_ENCODED = re.compile(r"[A-Za-z0-9+/_=\-]{16,}")
+MAX_UNTYPED_MEMO = 40  # what the assistant may write by itself: enough to say "rent", too little to carry much out
 
 
 class Action(IntEnum):
@@ -91,7 +92,7 @@ class PolicyEngine:
         if self._hostile(spans):
             return v.raise_to(Action.DENY, f"amount ₹{amount:,.0f} comes from content flagged as an injection")
         words = set(name_words(name))
-        about_payee = any(s.label == Label.UNTRUSTED and words & set(skeleton(s.text).split()) for s in spans)
+        about_payee = any(s.label == Label.UNTRUSTED and words & s.words for s in spans)
         claim = ctx.mandates.claim_document(name, others, bank.now, self.ttl) if about_payee else None
         if claim and amount <= self.p["untrusted"]["auto_pay_document_amount_max"]:
             return self._spend(v, claim)
@@ -141,8 +142,10 @@ class PolicyEngine:
             return
         if Label.UNTRUSTED in origins:
             v.raise_to(Action.APPROVE, "memo text was copied from third-party content")
-        if _DIGITS.search(memo) or any(re.search(r"\d", t) and re.search(r"[A-Za-z]", t) for t in _ENCODED.findall(memo)):
-            v.raise_to(Action.APPROVE, "memo carries a long number or encoded text the customer did not type")
+        if URL.search(memo):
+            v.raise_to(Action.APPROVE, "memo carries a link the customer did not type")
+        if len(memo) > MAX_UNTYPED_MEMO or _DIGITS.search(memo) or any(re.search(r"\d", t) and re.search(r"[A-Za-z]", t) for t in re.findall(r"[^\s]{5,}", memo)):
+            v.raise_to(Action.APPROVE, "memo carries a long or encoded text the customer did not type")
 
     def _check_unusual(self, v: Verdict, bank: Bank, name: str, amount: float) -> None:
         """Far more than this payee has ever been paid. Payees with no history have nothing to compare with."""
@@ -203,7 +206,7 @@ class PolicyEngine:
             if age_h < np["cooldown_hours"] and amount > np["cooldown_max_without_approval"]:
                 v.raise_to(Action.APPROVE, f"payee was added {age_h:.1f} h ago; first payments above ₹{np['cooldown_max_without_approval']:,} need confirmation")
             self._check_memo(v, bank, ctx, str(args["memo"]))
-            name, others = p.name, [q.name for q in bank.payees.values() if q.payee_id != p.payee_id]
+            name, others = p.name, [q.name for q in bank.payees.values() if q.payee_id != p.payee_id] + list(bank.billers)
         else:  # pay_bill
             name, ref = str(args["biller"]), str(args["reference"]).strip()
             if name not in bank.billers:
@@ -212,7 +215,7 @@ class PolicyEngine:
                 v.raise_to(Action.APPROVE, f"consumer number {ref!r} is not the customer's registered number with {name} (paying someone else's bill)")
             # bill references naturally come from the bill itself
             self._check_memo(v, bank, ctx, ref, from_document_ok=True)
-            others = [b for b in bank.billers if b != name]
+            others = [b for b in bank.billers if b != name] + [q.name for q in bank.payees.values()]
         self._check_amount(v, ctx, bank, amount, name, others)
         self._check_limits(v, bank, amount, sum(ctx.reserved.values()))
         self._check_unusual(v, bank, name, amount)

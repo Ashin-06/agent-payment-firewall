@@ -86,7 +86,8 @@ class Bank:
 
     def lookup_name(self, account_number: str, ifsc: str = "") -> str | None:
         """The name the receiving bank holds for this account, or None if it can't say."""
-        return self.account_names.get("".join(str(account_number).split()))
+        digits = "".join(c for c in str(account_number) if c.isalnum()).lstrip("0")
+        return next((name for acct, name in self.account_names.items() if acct.lstrip("0") == digits), None)
 
     def list_billers(self) -> list[dict]:
         return [{"biller": name, "consumer_number": ref} for name, ref in self.billers.items()]

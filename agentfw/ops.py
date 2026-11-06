@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
+from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -202,6 +203,14 @@ def require(permission: str) -> Callable[[Request], dict[str, str]]:
     def check(request: Request) -> dict[str, str]:
         s: Settings = request.app.state.settings
         if s.demo:
+            # No keys means loopback only, and a web page the customer visits can reach loopback too
+            for site in filter(None, (request.headers.get("host"), request.headers.get("origin"))):
+                try:
+                    name = urlsplit(site if "//" in site else "//" + site).hostname
+                except ValueError:
+                    name = None
+                if name not in ("localhost", "127.0.0.1", "::1", "testserver"):
+                    raise HTTPException(403, "this open demo only answers on this computer")
             return {"user": "", "role": "demo"}
         key = _presented_key(request.headers)
         ident = s.api_keys.get(hashlib.sha256(key.encode()).hexdigest()) if key else None

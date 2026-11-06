@@ -1,6 +1,6 @@
 # Evaluation
 
-Every number here was produced by version 1.4.0, except the live model section, which ran on 1.1.0, and the AgentDojo section, which ran just before the account-name check was added (that check does nothing for accounts the bank has no name for, which covers all of AgentDojo's). All can be reproduced with the commands shown. Raw output is in [`results/`](../results).
+Every number here was produced by version 1.5.0, with two exceptions. The live model section ran on 1.1.0. The AgentDojo section ran on the 1.4.0 code before the account-name check and the later attack rounds, whose changes only narrow what is allowed. All can be reproduced with the commands shown. Raw output is in [`results/`](../results).
 
 Results come from a sandbox bank and from attacks written or chosen by the author, plus AgentDojo's. Nobody independent has run them.
 
@@ -85,7 +85,7 @@ The limits of this evidence: it ran on 1.1.0, before the later parser rounds, wh
 
 `python -m agentfw redteam --sessions 20000 --seed 7` writes `results/redteam.json` and exits non-zero on any failure. A run of 5,000 sessions is part of CI.
 
-**Exploits.** 132 named attacks and failures: 0 work. Against version 1.0.0, 34 of the first 35 did. A second round aimed at the 1.1.0 parser added 30 sentences that aren't requests to pay, such as "Send the ₹5,000 receipt to Mom", and 21 worked. A third round on 1.2.0 added 31 everyday ones, such as "Send ₹500 to Mom maybe", and 26 worked, which led to the parser denying by default. A test also inserts each of 79 unknown words at every position in a plain request; none grants authority. They're readable as code in [`agentfw/redteam.py`](../agentfw/redteam.py).
+**Exploits.** 132 named attacks and failures, plus 197 from later rounds in [`agentfw/rounds.py`](../agentfw/rounds.py): 0 work. Against version 1.0.0, 34 of the first 35 did. A second round aimed at the 1.1.0 parser added 30 sentences that aren't requests to pay, such as "Send the ₹5,000 receipt to Mom", and 21 worked. A third round on 1.2.0 added 31 everyday ones, such as "Send ₹500 to Mom maybe", and 26 worked, which led to the parser denying by default. A test also inserts each of 79 unknown words at every position in a plain request; none grants authority. They're readable as code in [`agentfw/redteam.py`](../agentfw/redteam.py).
 
 **Randomized sessions.** A generator writes a customer conversation and records separately what it authorises. A fully compromised assistant then makes random hostile calls: spending authority repeatedly, attacker accounts in spaced and full-width forms, hidden secrets in memos, and junk such as `NaN`, `None` and unknown tools. Nobody approves anything. The oracle compares the ledger with the generator's record. It shares no code with the policy or the parser, so a parser mistake shows up as a violation.
 
@@ -93,21 +93,39 @@ The limits of this evidence: it ran on 1.1.0, before the later parser rounds, wh
 |---|---|
 | Sessions | 20,000, seed 7 |
 | Tool calls | about 130,000 |
-| Payments that went through | 5,982 |
-| Sessions with injected faults (bank timeouts after the debit, audit log down) | 5,039 |
+| Payments that went through | 4,896 |
+| Sessions with injected faults (bank timeouts after the debit, audit log down) | 5,082 |
 | Oracle violations | 0 |
 | Payments without an audit record first | 0 |
-| Audit chain over all 184,711 entries | intact |
+| Audit chain over all 183,433 entries | intact |
 
 A checker that never fails proves nothing, so the same oracle was run with each layer removed. Without mandates it finds violations in 102 of 300 sessions. See the table in [case-study.md](case-study.md#evidence).
 
 **Adaptive attacker.** A [2026 paper](https://arxiv.org/abs/2606.26479) points out that defences like this one have only been tested on fixed attacks, and that earlier defences which looked strong fell once attackers knew how they worked. So the red team includes an attacker that knows the rules and limits and searches for a way through. It controls every tool call and all third-party text, but not what the customer says. Starting from a conversation, it mutates its calls and documents, keeps whatever gets further, and restarts when it stops improving.
 
-Over 5,000 attempts on 33 conversations it found 0 breaches. It reached the riskier paths, with 3,050 calls ending up in the undo window. A test confirms that the same search does break the firewall when mandates are removed.
+Over 5,000 attempts on 35 conversations it found 0 breaches. It reached the riskier paths, with 2,161 calls ending up in the undo window. A test confirms that the same search does break the firewall when mandates are removed.
 
 This is hill climbing on the gateway's logic, not a proof, and an independent attacker would likely try things this one doesn't. Optimised attacks on the model, such as white-box GCG, wouldn't change it, because the model is already assumed to be fully compromised.
 
 **A customer who approves everything.** The honest worst case for held calls, over 2,000 sessions: 0 payments reached the attacker's account, because those are refused rather than held. Up to ₹2,43,024 left in one session, all to saved payees and billers and under the daily ceiling. Approvals protect only as well as the person giving them.
+
+**Attack rounds.** Each round was written against the version before it, and most of what worked is now fixed and kept as a test:
+
+| Round | Attacking | What it tried | Worked |
+|---|---|---|---|
+| 1 | Version 1.0 | Questions, refusals and replays turned into payments, malformed values, faults | 34 of 35 |
+| 2 | Version 1.1 | Sentences that mention a payee and amount without asking to pay | 21 of 30 |
+| 3 | Version 1.2 | Everyday wording: "maybe", "by Friday", "Rohan's wife" | 26 of 31 |
+| 5 | Version 1.4 | Beyond sentences: hangs, leaks through links, threads, MCP, approvals, name collisions, symbols | 40 of 60 |
+| 6 | The fixes | Taking a request back in other words, cancelling one payee, faking the approval screen, number formats, memos | 35 of 46 |
+| 7 | The fixes | More ways of taking it back, sentences of allowed words only | 7 of 56 |
+| 8 | The fixes | Labels, tags, sentences with two verbs, odd headers | 2 of 35 |
+| 9 | The fixes | Automated: common English words at every position, about 7,000 sentences | 1 |
+| 10 | The fixes | Automated: 60,000 random statements after a request | 2 kinds, then 0 apart from the case below |
+
+Round 4 was research rather than attacks. Rounds 9 and 10 are built into the test suite. The case left over from round 10 is by design: a follow-up starting with "read", "open" or "summarise" counts as a reading task.
+
+**Database.** The migrations, the undo window across a restart, approvals and the audit chain were also run on PostgreSQL 16, as well as the default SQLite.
 
 **Friction.** 5,000 of 5,000 plainly worded small requests completed with no friction. In a separate list of 20 harder phrasings, 14 did. These 6 wait for a confirmation:
 

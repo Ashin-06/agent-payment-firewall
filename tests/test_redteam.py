@@ -442,3 +442,71 @@ def test_an_adapter_without_a_name_lookup_still_works():
     g.user_message("Add Neha, account 12345678901234, IFSC HDFC0000001.")
     with __import__("unittest.mock", fromlist=["patch"]).patch.object(Bank, "lookup_name", None):
         assert g.call("add_payee", {"name": "Neha", "account_number": "12345678901234", "ifsc": "HDFC0000001"}).status == "executed"
+
+
+def test_every_later_attack_round_is_stopped():
+    from agentfw.rounds import run_rounds
+
+    results = run_rounds()
+    assert len(results) >= 150
+    assert {k: v for k, v in results.items() if v} == {}
+
+
+# Round nine: not chosen by hand. Common English words, at every position in plain requests.
+COMMON = """the of and a to in he have it that for they with as not on she at by this we you do but from or which one would all will there say who make when can more if no man out
+    other so what time up go about than into could state only new year some take come these know see use get like then first any work now may such give over think most even find day
+    also after way many must look before great back through long where much should well people down own just because good each those feel seem how high too place little world very still
+    nation hand old life tell write become here show house both between need mean call develop under last right move thing general school never same another begin while number part turn
+    real leave might want point form off child few small since against ask late home interest large person end open public follow during present without again hold govern around possible
+    head consider word program problem however lead system set order eye plan run keep face fact group play stand increase early course change help line maybe perhaps almost nearly probably
+    possibly already yet soon later ago until though although unless therefore instead rather quite pretty somewhat roughly approximately exactly friend wife husband brother sister son daughter
+    boss neighbour colleague doctor lawyer police bank manager company monday tuesday friday sunday january march week month tonight tomorrow yesterday morning evening dollars euros pounds
+    bitcoin gold shares loan fee deposit interest fine tax scam fraud fake test example demo joke kidding pretend imagine suppose hypothetically suggest recommend remember remind forgot
+    worth half double quarter most least minimum maximum total extra less more plus minus nothing none nobody someone everyone anyone""".split()
+REQUESTS = ["Send ₹500 to Mom", "Pay Mom ₹500", "Please transfer ₹500 to Mom", "Can you send ₹500 to Mom", "I want to pay ₹500 to Mom"]
+
+
+def test_round_nine_common_words_anywhere_grant_nothing_they_should_not():
+    """Words on the short list are allowed by design, and only before the verb if they're polite openers."""
+    from agentfw.mandate import _PLAIN_WORDS, Mandates
+
+    wrong = []
+    for word in dict.fromkeys(COMMON):
+        for request in REQUESTS:
+            tokens = request.split()
+            for i in range(1, len(tokens) + 1):
+                sentence = " ".join(tokens[:i] + [word] + tokens[i:])
+                if word in _PLAIN_WORDS or word in ("for", "from", "but", "then", "however"):
+                    continue  # the list is allowed by design; a dangling connector leaves the same request
+                m = Mandates()
+                m.add(sentence, 0.0, ["Mom", "Rohan Mehta"])
+                c = m.claim("Mom", 500, [], 0.0, 3600)
+                if c and not c.caution:
+                    wrong.append(sentence)
+    assert wrong == []
+
+
+def test_round_ten_any_unreadable_statement_after_a_request_cancels_it():
+    """Two common words nobody listed, 3,000 times: whatever the customer said, the earlier request no longer stands."""
+    import random
+
+    from agentfw.mandate import _PLAIN_WORDS, Mandates
+
+    rng = random.Random(10)
+    unknown = [w for w in dict.fromkeys(COMMON) if w not in _PLAIN_WORDS]
+    for _ in range(3000):
+        said = f"{rng.choice(unknown).capitalize()} {rng.choice(unknown)}."
+        m = Mandates()
+        m.add("Send ₹500 to Mom.", 0.0, ["Mom", "Rohan Mehta"])
+        m.add(said, 0.0, ["Mom", "Rohan Mehta"])
+        assert m.claim("Mom", 500, [], 0.0, 3600) is None, said
+
+
+@pytest.mark.parametrize("said", ["What's my balance?", "Show my statement.", "Thanks.", "Thank you!", "ok", "Read my email.", "Check my documents, please."])
+def test_ordinary_follow_ups_do_not_cancel_a_request(said):
+    from agentfw.mandate import Mandates
+
+    m = Mandates()
+    m.add("Send ₹500 to Mom.", 0.0, ["Mom"])
+    m.add(said, 0.0, ["Mom"])
+    assert m.claim("Mom", 500, [], 0.0, 3600), said
