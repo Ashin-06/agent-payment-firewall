@@ -36,9 +36,10 @@ class Pending:
     reasons: list[str]
     digest: str
     created: float = field(default_factory=time.time)
-    status: str = "pending"  # pending | approved | denied | executed | expired
+    status: str = "pending"  # pending | approved | denied | executed | expired | scheduled | undone
     decided_by: str | None = None
     summary: str = ""  # what the approver is shown, with the real recipient
+    release_at: float | None = None  # scheduled: when it goes out, in the bank's clock
 
 
 class ApprovalQueue:
@@ -57,9 +58,9 @@ class ApprovalQueue:
 
     def get(self, pid: str) -> Pending | None:
         with self.db.connect() as c:
-            r = c.execute(text("SELECT id, tool, args, reasons, digest, created_at, status, decided_by, summary FROM approvals "
+            r = c.execute(text("SELECT id, tool, args, reasons, digest, created_at, status, decided_by, summary, release_at FROM approvals "
                                "WHERE id = :id"), {"id": pid}).first()
-        return None if r is None else Pending(r[0], r[1], json.loads(r[2]), json.loads(r[3]), r[4], float(r[5]), r[6], r[7], r[8] or "")
+        return None if r is None else Pending(r[0], r[1], json.loads(r[2]), json.loads(r[3]), r[4], float(r[5]), r[6], r[7], r[8] or "", r[9])
 
     def _update(self, sql: str, **params) -> bool:
         """Run one conditional UPDATE; True if it changed the row (nobody got there first)."""
@@ -88,6 +89,34 @@ class ApprovalQueue:
             raise PermissionError("no approved request with that id")
         raise PermissionError("call differs from what the customer approved")
 
+    def schedule(self, tool: str, args: dict, reasons: list[str], summary: str, release_at: float) -> Pending:
+        """A permitted call that waits out the undo window before the bank is called."""
+        p = Pending(f"UND-{secrets.token_hex(4).upper()}", tool, dict(args), list(reasons), call_hash(tool, args), status="scheduled",
+                    summary=summary, release_at=release_at)
+        with self.db.begin() as c:
+            c.execute(text("INSERT INTO approvals (id, tool, args, reasons, digest, created_at, status, summary, release_at) "
+                           "VALUES (:id, :tool, :args, :reasons, :digest, :created, 'scheduled', :summary, :release)"),
+                      {"id": p.id, "tool": tool, "args": json.dumps(p.args, default=str), "reasons": json.dumps(p.reasons),
+                       "digest": p.digest, "created": int(p.created), "summary": summary, "release": int(release_at)})
+        return p
+
+    def defer(self, pid: str, tool: str, args: dict, release_at: float) -> bool:
+        """An approved call that still has to wait out the undo window."""
+        return self._update("UPDATE approvals SET status = 'scheduled', release_at = :r WHERE id = :id AND status = 'approved' AND digest = :d",
+                            id=pid, r=int(release_at), d=call_hash(tool, args))
+
+    def scheduled(self) -> list[Pending]:
+        with self.db.connect() as c:
+            ids = [r[0] for r in c.execute(text("SELECT id FROM approvals WHERE status = 'scheduled' ORDER BY release_at, id"))]
+        return [p for p in map(self.get, ids) if p]
+
+    def undo(self, pid: str, who: str) -> bool:
+        return self._update("UPDATE approvals SET status = 'undone', decided_by = :who WHERE id = :id AND status = 'scheduled'", id=pid, who=who)
+
+    def release(self, pid: str) -> bool:
+        """The window has passed. Conditional, so an undo and a release can't both win."""
+        return self._update("UPDATE approvals SET status = 'executed' WHERE id = :id AND status = 'scheduled'", id=pid)
+
     def fail(self, pid: str) -> None:
         """An approved call that can no longer run (a limit was reached since it was held)."""
         self._update("UPDATE approvals SET status = 'denied' WHERE id = :id AND status = 'approved'", id=pid)
@@ -101,4 +130,4 @@ class ApprovalQueue:
     def expire_pending(self) -> None:
         """Retire every open request (the demo console's reset); nothing is deleted."""
         with self.db.begin() as c:
-            c.execute(text("UPDATE approvals SET status = 'expired' WHERE status = 'pending'"))
+            c.execute(text("UPDATE approvals SET status = 'expired' WHERE status IN ('pending', 'scheduled')"))

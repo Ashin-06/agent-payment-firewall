@@ -88,7 +88,7 @@ def replay(gw: Gateway, calls: list[dict], env: dict) -> str:
             status = gw.call(f, a).status if gw.enforce else "executed"
         else:
             status = gw.call(f, a).status
-        if status != "executed":
+        if status not in ("executed", "scheduled"):  # scheduled money still moves unless someone stops it
             return status
     return "executed"
 

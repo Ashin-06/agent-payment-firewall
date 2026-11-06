@@ -1,6 +1,6 @@
 # Threat model
 
-What the firewall protects, from whom, and what is still open. Written for the 1.3.0 code; it
+What the firewall protects, from whom, and what is still open. Written for the 1.4.0 code; it
 has not been reviewed by anyone independent.
 
 ## What it protects
@@ -51,6 +51,13 @@ documents, emails, statement memos (third parties) ──────┘        
 | Structuring and velocity abuse | Per-payment, daily, per-hour and just-under-threshold limits | Limits are computed on the demo account's ledger; the real ledger must back them |
 | Firewall switched off | The reset/enforce toggle needs the `reset` permission and is refused in production | An admin key in development can turn it off (by design, for the demo) |
 | Audit trail edited | HMAC chain; editing, deleting in the middle or reordering fails verification | Truncating the newest entries is only caught if the chain head is exported elsewhere |
+| A bug or bypass in the rules | An independent last check before the bank: amount, payee, balance, ceilings, freeze | Doesn't know who the customer asked to pay; it limits the damage rather than preventing a wrong payment |
+| A payment that was allowed but shouldn't have been | First payments to new payees and amounts from documents wait 10 minutes and can be undone | Payments to established payees at amounts the customer typed go at once |
+| Customer talked into typing a scammer's account | The receiving bank's account name is compared with the name given; a mismatch is held and shows the real name | No help where the bank can't answer, or where the scammer's account name matches |
+| Draining the account, or an amount out of character | More than half the balance, or 5 times the most this payee has been paid, is held | Payees with no history have nothing to compare with |
+| Many new payees added quickly | At most 2 a day; more are refused | Counted on this account's payee list |
+| Model tells the customer something untrue about a payment | The gateway's receipt appears beside the reply | The customer has to read it. Hosts using the Python API or MCP must show it themselves |
+| Model authorising itself over MCP | Customer messages and approvals are separate methods, not tools; the model can only cause `tools/call` | A host that lets the model choose method names defeats this |
 | Stolen API key | Per-client keys, roles, rate limit per key, the approver's user recorded in the audit | Works until removed from the key list and the service restarts |
 | One customer acting on another's account | — | **Not handled**: the console drives one shared demo account. Per-customer sessions from the bank's identity provider are required |
 | Oversized or flooding requests | 64 KB body cap, 4,000-character messages, per-client token bucket, at most 12 model turns per message | Per process; put a shared limiter at the ingress |

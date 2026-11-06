@@ -5,14 +5,14 @@ How to deploy, configure and operate the firewall console. Commands assume the r
 ## Deploy
 
 ```bash
-docker build -t agent-payment-firewall:1.3.0 .
+docker build -t agent-payment-firewall:1.4.0 .
 python -m agentfw.ops keygen          # one API key per client, plus the audit key
 # put the printed entries in agentfw-keys.json: {"sha256:<hex>": {"user": "meera", "role": "customer"}}
 docker run -d --name agentfw -p 8004:8004 -v agentfw-data:/data \
   -v "$PWD/agentfw-keys.json:/run/secrets/agentfw-keys.json:ro" \
   -e AGENTFW_KEYS_FILE=/run/secrets/agentfw-keys.json \
   -e AGENTFW_AUDIT_KEY=... -e GOOGLE_API_KEY=... \
-  agent-payment-firewall:1.3.0
+  agent-payment-firewall:1.4.0
 curl -fsS http://127.0.0.1:8004/readyz
 ```
 
@@ -35,7 +35,7 @@ Without Docker: `pip install -r requirements.lock && pip install -e .`, then `ag
 | `AGENTFW_AUDIT_KEY` | yes | base64, at least 32 bytes; HMAC key for the audit chain |
 | `AGENTFW_DATABASE_URL` | yes | `sqlite:////data/agentfw.db` or `postgresql://...` (default in development: in memory) |
 | `GOOGLE_API_KEY` or `ANTHROPIC_API_KEY` | one of them | the assistant's credentials; without one (development only) the console can only replay benchmark scenarios. Google is used if both are set |
-| `AGENTFW_MODEL` | — | defaults: `gemini-3.5-flash`, `claude-opus-5-5` |
+| `AGENTFW_MODEL` | — | the assistant's model; each provider has a default |
 | `AGENTFW_POLICY` | — | path to a policy file; default is the `policy.toml` inside the package |
 | `AGENTFW_HOST`, `AGENTFW_PORT` | — | default `127.0.0.1:8004`; any non-loopback address needs API keys |
 | `AGENTFW_RATE_LIMIT` | — | requests per minute per client (default 120) |
@@ -45,6 +45,14 @@ Without Docker: `pip install -r requirements.lock && pip install -e .`, then `ag
 | `FORWARDED_ALLOW_IPS` | — | addresses of proxies whose `X-Forwarded-For` is trusted (uvicorn) |
 
 Policy limits live in `agentfw/policy.toml` (copied into the image); change them there and rebuild, or mount a file and point `AGENTFW_POLICY` at it.
+
+## Undo window
+
+First payments to a new payee and amounts taken from a document wait `[undo] window_minutes` (default 10; 0 turns it off) before the bank is called. They are kept in the `approvals` table, so they survive a restart, and count against the limits. `POST /api/scheduled/<id>/undo` stops one, needing the `approve` permission; so does the customer saying "cancel that". Your bank adapter sees nothing until the window has passed.
+
+## MCP
+
+`python -m agentfw mcp` serves the firewall over stdio. The host program, not the model, must send `agentfw/customer_message`, `agentfw/approve`, `agentfw/undo` and `agentfw/reconcile`. Never let the model choose a method name. `AGENTFW_BANK=package.module:factory` supplies your bank adapter; `AGENTFW_DATABASE_URL` and `AGENTFW_AUDIT_KEY` work as they do for the console.
 
 ## Watch
 

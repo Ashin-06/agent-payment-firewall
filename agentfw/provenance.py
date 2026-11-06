@@ -91,6 +91,7 @@ def amounts_in(text: str, marked_only: bool = False) -> set[float]:
 class Context:
     spans: list[Span] = field(default_factory=list)
     mandates: Mandates = field(default_factory=lambda: _new_mandates())
+    reserved: dict[str, float] = field(default_factory=dict)  # scheduled payments not yet sent, by request id
 
     def add(self, text: str, label: Label, source: str, risk: float = 0.0) -> None:
         if text:

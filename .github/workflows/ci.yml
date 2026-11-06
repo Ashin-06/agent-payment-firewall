@@ -29,6 +29,7 @@ jobs:
       - run: pip-audit -r requirements.lock --no-deps --disable-pip --progress-spinner off
       - run: pytest -q --cov --cov-report=term-missing:skip-covered
       - run: python -m agentfw bench
+      - run: python -m agentfw paired --out /tmp/paired.json
       - run: python -m agentfw redteam --sessions 5000 --out /tmp/redteam.json
       - if: always()
         run: coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY" || true

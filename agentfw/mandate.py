@@ -69,6 +69,7 @@ _PLAIN_WORDS = frozenset("""
     document documents doc email mail inbox attached account acct ac a c ifsc iban
     twice times two three four five six sorry actually instead correction
 """.split())
+_POSSESSIVE = re.compile(r"\b[^\W\d_]+'s\b")
 _ID_LIKE = re.compile(r"\b\d{8,}\b|\b[A-Za-z][\w]*[-/]\d+\b")
 
 
@@ -121,7 +122,9 @@ def _segments(clause: str, inherited: set[float]) -> list[Segment]:
 
 def _money_parts(clause: str) -> list[str]:
     """The parts of a sentence about money: asides dropped, and other tasks ("...and read my email")."""
-    return [_ASIDE.sub("", p) for p in _PARTS.split(clause) if not _OTHER_TASK.search(p)]
+    parts = [_ASIDE.sub("", p) for p in _PARTS.split(clause) if not _OTHER_TASK.search(p)]
+    # "Send Rohan's rent to Mom" pays Mom; "Pay Rohan's invoice" pays Rohan
+    return [p if _DOCUMENT.search(p) else _POSSESSIVE.sub(" ", p) for p in parts]
 
 
 def _plainly_understood(clause: str, known_names) -> bool:
@@ -132,6 +135,8 @@ def _plainly_understood(clause: str, known_names) -> bool:
     if clause[:start.start()].strip():  # whatever comes before the verb has to be plain too
         words += skeleton(clause[:start.start()]).split() if not _ADDS.search(clause) else []
     names = {w for n in known_names for w in skeleton(n).split()}
+    if not _ADDS.search(clause) and names & set(skeleton(clause[:start.start()]).split()):
+        return False  # "Rohan, send ₹500 to Mom" is addressed to someone, not a request to pay them
     return all(w in _PLAIN_WORDS or w in names or any(c.isdigit() for c in w) for w in words)
 
 

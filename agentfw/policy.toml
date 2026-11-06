@@ -8,6 +8,9 @@ max_payments_per_hour = 6
 structuring_window_minutes = 60    # several payments just under approval_above inside this window
 structuring_count = 3
 structuring_band = 0.80            # "just under" = between 80% and 100% of approval_above
+max_share_of_balance = 0.5         # one payment taking more than this share of the balance needs the customer to confirm
+unusual_multiple = 5               # this many times the largest earlier payment to the same payee needs the customer to confirm
+max_new_payees_per_day = 2         # more than this and new payees are refused until tomorrow
 
 [new_payee]
 cooldown_hours = 24                # payees younger than this are "new"
@@ -28,6 +31,11 @@ blocked_words = ["otp", "pin", "cvv", "password", "passcode", "upi pin", "one ti
 start = 0                          # local hour, inclusive
 end = 5                            # exclusive; money movement inside needs approval
 utc_offset_minutes = 330           # the bank's clock, so results don't depend on the server's timezone
+
+[undo]
+# Risky but permitted payments wait this long before the bank is called, so they can still be stopped:
+# first payments to a new payee, and amounts taken from a document. 0 turns this off.
+window_minutes = 10
 
 [mandate]
 ttl_minutes = 30                   # what the customer asked for lapses after this long

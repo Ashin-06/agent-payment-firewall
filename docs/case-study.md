@@ -38,6 +38,8 @@ Version 1.2 fixed those. Then a third round tried 31 everyday sentences, and 26 
 
 That result showed the design was wrong, not just incomplete. The parser granted authority unless it spotted a warning sign, and warning signs have no end. Version 1.3 turns this around: a sentence grants money only if every word in it is a payee's name, a number or on a short list. One unknown word and the payment waits for a person. A miss now costs a confirmation in the common case. Natural sentences such as "My mom needs ₹500, send it to her" pay that cost.
 
+A fourth pass then asked what the rules still couldn't see, using published research rather than more attacks of the same kind. It added the undo window, the independent last check, the account-name check and the firewall's own receipt, described below. 17 more exploits were written against those additions and the parser, and all are stopped.
+
 ## The approach
 
 **Mandates: single-use authority from the customer's own words.** Each customer sentence is parsed by fixed rules, never by a model, so nothing the assistant reads can affect the result. A plain request becomes a mandate naming the payees, the amounts that go with each, and how many times. Executing or holding a payment spends it. Questions, reports ("the email says: send..."), negations, cancellations, conditions and future dates grant nothing or need confirmation. So does any sentence with a word the rules don't know.
@@ -47,29 +49,38 @@ Mandates sit beside provenance, not in place of it. Each covers what the other m
 - Provenance alone allows a question to become a payment.
 - Mandates alone would still hold a stranger's account for approval, where a careless customer could approve it.
 
-With both, an account the customer never typed is refused outright. In 2,000 sessions with a customer who approved every request, no money reached the attacker. With the provenance layer removed, the attacker's account was paid 3 times in 200 sessions.
+With both, an account the customer never typed is refused outright. In 2,000 sessions with a customer who approved every request, no money reached the attacker. With the provenance layer removed, the attacker's account was paid in the same test.
 
 **Stopping is a first-class outcome.** After 5 refused or held calls the gateway halts the assistant until the customer speaks. An unknown bank outcome freezes money until a person checks. A write that can't be logged doesn't happen, and a restart doesn't clear a freeze: a payment with no recorded outcome keeps money frozen. A policy crash refuses the call.
 
 **Approvals show what will happen.** The approver sees "Send ₹30,000 to Rohan Mehta (account 918020045566771...)", not `{"payee_id": "P1"}`. The approval is bound to that text and to a hash of the exact call, is single-use, expires, and has hard limits rechecked when it runs. Open requests are capped so nobody can be flooded into approving.
 
+**A way back.** Agents tend to act first and notice the problem afterwards, and a payment can't be recalled. So first payments to a new payee, and amounts taken from a document, wait 10 minutes before the bank is called. No bank feature is needed: the gateway simply hasn't called the bank yet. The customer can undo them, or say "cancel that". Scheduled money counts against the limits, everything is checked again before it goes, and nothing goes while money is frozen.
+
+**A line that shares nothing with the rules.** Every check used to live in one policy engine, so one bug could disable them all. The last check before the bank is a few lines with no dependency on the rules or the parser, tested by bypassing every rule at once.
+
+**Asking the bank.** The worst remaining case was a customer being talked into typing a scammer's account. In India, [RBI told banks](https://resources.probe42.in/regulatory-updates/rbi-circulars/rbi-circular-beneficiary-name-look-up-for-rtgs-and-neft-transactions/) to offer an account-name lookup for RTGS and NEFT by April 2025, so the gateway uses one where it exists: if the receiving bank's name doesn't match, the customer sees the real name first.
+
+**The truth, from the firewall.** A model can tell the customer "done" about a refused payment. So the gateway reports what actually happened beside the reply.
+
 ## How it relates to other work
 
-[AgentDojo](https://github.com/ethz-spylab/agentdojo) is the benchmark used here. [CaMeL](https://arxiv.org/abs/2503.18813) tracks data flow through a separate interpreter and a pair of models, and also enforces capabilities on values. This project is much narrower: a deterministic gateway for one domain that needs no change to the agent. Its particular contribution is single-use authority derived from what the customer asked, enforced at the tool boundary, tested against an oracle independent of that logic.
+See [related-work.md](related-work.md). Binding an approval to exact parameters is established work, as in GateArena. The particular contribution here is single-use authority derived from what the customer asked, denied by default and enforced at the tool boundary, with a way back for what's still allowed, tested against an oracle independent of that logic.
 
 ## Evidence
 
-Numbers, method and commands are in [evaluation.md](evaluation.md). In short: 0 of 28 built-in attacks, 0 of 144 AgentDojo task and attack pairs executed, 0 of 115 exploits, and 0 oracle violations in 20,000 randomized sessions with injected faults, while 6,290 authorised payments still went through.
+Numbers, method and commands are in [evaluation.md](evaluation.md). In short: 0 of 28 built-in attacks, 0 of 144 AgentDojo task and attack pairs executed, 43 of 43 should-act and should-abstain pairs, 0 of 132 exploits, 0 breaches from an adaptive attacker, and 0 oracle violations in 20,000 randomized sessions with injected faults, while 5,982 authorised payments still went through.
 
 Removing each layer in turn shows what it does:
 
 | Layer removed | Built-in attacks that now succeed | Exploits that now work | Oracle violations in 300 sessions | Attacker payments if all approved |
 |---|---|---|---|---|
-| Mandates | 11 | 82 | 108 | 0 |
-| Holding for the customer | 14 | 85 | 211 | 0 |
-| Memo rules | 1 | 6 | 24 | 0 |
-| Fail-safe freeze and stop | 0 | 2 | 1 | 0 |
-| Provenance | 0 | 1 | 0 | 3 |
+| Holding for the customer | 14 | 92 | 206 | 0 |
+| Mandates | 10 | 85 | 102 | 0 |
+| Memo rules | 1 | 6 | 23 | 0 |
+| Fail-safe freeze and stop | 0 | 4 | 0 | 0 |
+| Last check | 0 | 3 | 0 | 0 |
+| Provenance | 0 | 2 | 0 | 1 |
 | Limits | 0 | 2 | 0 | 0 |
 | Neutralising third-party text | 1 | 1 | 0 | 0 |
 | Argument validation | 0 | 1 | 0 | 0 |
@@ -78,7 +89,7 @@ The layers overlap by design, so some show little alone. Argument validation is 
 
 ## Known limits
 
-Listed in full in the [README](../README.md#limitations). The main ones: a customer talked into typing an attacker's account can't be detected, a careless approver can still pay saved payees up to the daily ceiling, the rules read only English, and nothing here has been independently reviewed. The firewall has only run against a sandbox bank.
+Listed in full in the [README](../README.md#limitations). The main ones: a customer talked into typing an attacker's account can't be detected where the bank has no name lookup, a careless approver can still pay saved payees up to the daily ceiling, the rules read only English, and nothing here has been independently reviewed. The firewall has only run against a sandbox bank.
 
 ## Reproduce it
 
@@ -86,6 +97,7 @@ Listed in full in the [README](../README.md#limitations). The main ones: a custo
 pip install -r requirements.txt
 python -m pytest -q
 python -m agentfw bench
+python -m agentfw paired
 python -m agentfw redteam --sessions 20000 --seed 7
 ```
 

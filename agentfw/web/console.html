@@ -26,7 +26,7 @@
   .bot { align-self:flex-start; background:var(--code); }
   .step { font:12px/1.4 ui-monospace,Consolas,monospace; color:var(--muted); align-self:flex-start; }
   .step { overflow-wrap:anywhere; }
-  .step b.executed { color:var(--ok); } .step b.held { color:var(--warn); } .step b.denied, .step b.error, .step b.unknown { color:var(--bad); }
+  .step b.executed { color:var(--ok); } .step b.held, .step b.scheduled { color:var(--warn); } .step b.denied, .step b.error, .step b.unknown { color:var(--bad); }
   form { display:flex; gap:8px; margin-top:10px; }
   input[type=text] { flex:1; padding:9px 11px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--ink); font:inherit; }
   button { font:inherit; font-weight:600; padding:8px 14px; border:0; border-radius:8px; background:var(--accent); color:#fff; cursor:pointer; }
@@ -35,6 +35,7 @@
   .side { display:flex; flex-direction:column; gap:16px; }
   .pending { border:1px solid var(--warn); border-radius:8px; padding:10px; margin-bottom:8px; }
   .what { font-weight:600; margin-bottom:4px; overflow-wrap:anywhere; }
+  .receipt { align-self:stretch; white-space:pre-wrap; border:1px solid var(--line); border-radius:8px; padding:8px 12px; font-size:13px; overflow-wrap:anywhere; }
   .frozen { background:var(--bad); color:#fff; padding:10px 20px; display:none; gap:12px; align-items:center; flex-wrap:wrap; }
   .reason { color:var(--muted); font-size:13px; }
   table { width:100%; border-collapse:collapse; font-size:13px; }
@@ -60,6 +61,7 @@
   </section>
   <div class="side">
     <section class="card"><h2>Waiting for your approval</h2><div id="pending"><p class="reason">Nothing pending.</p></div></section>
+    <section class="card"><h2>Can still be undone</h2><div id="scheduled"><p class="reason">Nothing scheduled.</p></div></section>
     <section class="card"><h2>Account</h2><div id="account"></div></section>
     <section class="card"><h2>Audit trail <span id="chain"></span></h2><div id="audit"></div></section>
   </div>
@@ -90,6 +92,11 @@ async function refresh() {
       ${p.reasons.map((r) => `<div class="reason">${esc(r.replace(/^\[\w+\]\s*/, ""))}</div>`).join("")}
       <div style="margin-top:8px;display:flex;gap:8px"><button class="approve" data-id="${p.id}" data-ok="1">Approve</button><button class="deny" data-id="${p.id}" data-ok="0">Decline</button></div>
     </div>`).join("") : '<p class="reason">Nothing pending.</p>';
+  $("scheduled").innerHTML = s.scheduled.length ? s.scheduled.map((p) => `
+    <div class="pending"><div class="what">${esc(p.summary)}</div>
+      <div class="reason">Goes out in about ${Math.ceil(p.seconds_left / 60)} min unless you undo it.</div>
+      <div style="margin-top:8px"><button class="deny" data-undo="${esc(p.id)}">Undo</button></div>
+    </div>`).join("") : '<p class="reason">Nothing scheduled.</p>';
   $("account").innerHTML = `<p><strong>${inr(s.balance.balance)}</strong> available</p>
     <table><tr><th>Payee</th><th>Account</th></tr>${s.payees.map((p) => `<tr><td>${esc(p.name)}</td><td>${esc(p.account_number)}</td></tr>`).join("")}</table>
     <table style="margin-top:10px"><tr><th>Recent</th><th>Amount</th></tr>${s.ledger.slice(0, 6).map((t) => `<tr><td>${esc(t.counterparty)}</td><td>${t.kind === "credit" ? "+" : "−"}${inr(t.amount)}</td></tr>`).join("")}</table>`;
@@ -109,6 +116,15 @@ $("pending").addEventListener("click", async (ev) => {
   refresh();
 });
 
+$("scheduled").addEventListener("click", async (ev) => {
+  const b = ev.target.closest("button[data-undo]");
+  if (!b) return;
+  const r = await api(`/api/scheduled/${b.dataset.undo}/undo`, { method: "POST" });
+  const body = await r.json();
+  add("step", `undo ${esc(b.dataset.undo)}: <b class="${r.ok ? "held" : "error"}">${esc(r.ok ? body.status : body.detail)}</b>`);
+  refresh();
+});
+
 $("chat").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const text = $("input").value.trim();
@@ -120,6 +136,7 @@ $("chat").addEventListener("submit", async (ev) => {
   if (!r.ok) { add("msg bot", esc(body.detail)); return; }
   for (const s of body.steps) add("step", `${esc(s.tool)} ${esc(JSON.stringify(s.args))} → <b class="${s.status}">${s.status}</b>`);
   add("msg bot", esc(body.reply));
+  if (body.receipt) add("receipt", `<b>From the firewall, not the assistant</b>\n${esc(body.receipt)}`);
   refresh();
 });
 
@@ -133,6 +150,7 @@ $("reconcile").addEventListener("click", async () => { await api("/api/reconcile
 $("reset").addEventListener("click", doReset);
 $("enforce").addEventListener("change", doReset);
 refresh();
+setInterval(refresh, 15000);
 </script>
 </body>
 </html>

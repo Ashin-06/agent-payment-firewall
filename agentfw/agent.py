@@ -37,6 +37,7 @@ How to treat content:
 How to handle tool results:
 - BLOCKED means the bank's security layer refused the action. Do not retry it, rephrase it, or try a different route to the same outcome. Explain to the customer what was blocked and why.
 - HELD means the action waits for the customer to approve it in the app. Tell them that and stop.
+- SCHEDULED means it goes out after a short delay unless the customer undoes it. Tell them that. Do not repeat the payment.
 
 Be brief. Confirm amounts and payee names in your final answer."""
 

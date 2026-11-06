@@ -2,6 +2,23 @@
 
 All notable changes to this project. Versions follow [semantic versioning](https://semver.org/).
 
+## 1.4.0 — 2026-11-06
+
+Added after reviewing published work and asking what the rules still couldn't see. See [docs/related-work.md](docs/related-work.md).
+
+### Added
+- Undo window: first payments to a new payee and amounts from a document wait 10 minutes before the bank is called, and can be undone or cancelled in chat. They survive a restart and count against limits.
+- An independent last check before the bank, sharing no logic with the rules.
+- Account-name check against the receiving bank's record, where the bank can answer.
+- Holds for a payment over half the balance or far above what a payee has been paid, and a limit of 2 new payees a day.
+- A receipt from the firewall beside each reply, so the assistant can't misreport a payment.
+- MCP server (`python -m agentfw mcp`), tested with the official client. Customer messages and approvals are host-only methods, out of the model's reach.
+- `python -m agentfw paired`: 43 should-act and should-abstain pairs, scored only when both sides are right.
+- An adaptive attacker in the red team, which knows the rules and searches for a way through.
+
+### Fixed
+- A name before the verb ("Rohan, send ₹500 to Mom") or a possessive ("Rohan's rent") could authorise the wrong payee.
+
 ## 1.3.0 — 2026-11-06
 
 A third attack round: 26 of 31 everyday sentences, such as "Send ₹500 to Mom maybe", were read as requests to pay.

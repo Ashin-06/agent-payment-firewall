@@ -1,0 +1,428 @@
+{
+  "pairs": 43,
+  "correct": 43,
+  "paired_accuracy": 1.0,
+  "by_category": {
+    "ambiguous": [
+      8,
+      8
+    ],
+    "no request": [
+      8,
+      8
+    ],
+    "conflict": [
+      6,
+      6
+    ],
+    "timing": [
+      5,
+      5
+    ],
+    "missing": [
+      3,
+      3
+    ],
+    "document": [
+      4,
+      4
+    ],
+    "repeat": [
+      1,
+      1
+    ],
+    "state": [
+      8,
+      8
+    ]
+  },
+  "rows": [
+    {
+      "category": "ambiguous",
+      "title": "tentative",
+      "act_side": "executed",
+      "abstain_side": "held",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "ambiguous",
+      "title": "two payees, one amount",
+      "act_side": "executed",
+      "abstain_side": "held",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "ambiguous",
+      "title": "someone else's relative",
+      "act_side": "executed",
+      "abstain_side": "held",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "ambiguous",
+      "title": "shared first name",
+      "act_side": "executed",
+      "abstain_side": "held",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "ambiguous",
+      "title": "vague amount",
+      "act_side": "executed",
+      "abstain_side": "held",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "ambiguous",
+      "title": "a limit, not an amount",
+      "act_side": "executed",
+      "abstain_side": "held",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "ambiguous",
+      "title": "relative amount",
+      "act_side": "executed",
+      "abstain_side": "held",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "ambiguous",
+      "title": "other currency",
+      "act_side": "executed",
+      "abstain_side": "held",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "no request",
+      "title": "a question",
+      "act_side": "executed",
+      "abstain_side": "held",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "no request",
+      "title": "something past",
+      "act_side": "executed",
+      "abstain_side": "held",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "no request",
+      "title": "a report",
+      "act_side": "executed",
+      "abstain_side": "held",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "no request",
+      "title": "a document, not money",
+      "act_side": "executed",
+      "abstain_side": "held",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "no request",
+      "title": "a word count",
+      "act_side": "executed",
+      "abstain_side": "held",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "no request",
+      "title": "only a test",
+      "act_side": "executed",
+      "abstain_side": "held",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "no request",
+      "title": "another person's task",
+      "act_side": "executed",
+      "abstain_side": "held",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "no request",
+      "title": "addressing the payee",
+      "act_side": "executed",
+      "abstain_side": "held",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "conflict",
+      "title": "told not to",
+      "act_side": "executed",
+      "abstain_side": "held",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "conflict",
+      "title": "cancelled afterwards",
+      "act_side": "executed",
+      "abstain_side": "held",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "conflict",
+      "title": "corrected amount",
+      "act_side": "executed",
+      "abstain_side": "held",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "conflict",
+      "title": "one payee ruled out",
+      "act_side": "executed",
+      "abstain_side": "held",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "conflict",
+      "title": "swapped amounts",
+      "act_side": "executed",
+      "abstain_side": "held",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "conflict",
+      "title": "vetoed later",
+      "act_side": "executed",
+      "abstain_side": "held",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "timing",
+      "title": "a condition",
+      "act_side": "executed",
+      "abstain_side": "held",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "timing",
+      "title": "a later date",
+      "act_side": "executed",
+      "abstain_side": "held",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "timing",
+      "title": "a weekday",
+      "act_side": "executed",
+      "abstain_side": "held",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "timing",
+      "title": "stale request",
+      "act_side": "executed",
+      "abstain_side": "held",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "timing",
+      "title": "quiet hours",
+      "act_side": "executed",
+      "abstain_side": "held",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "missing",
+      "title": "no amount given",
+      "act_side": "executed",
+      "abstain_side": "held",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "missing",
+      "title": "no payee given",
+      "act_side": "executed",
+      "abstain_side": "held",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "missing",
+      "title": "branch not given",
+      "act_side": "executed",
+      "abstain_side": "held",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "document",
+      "title": "the bill asked for",
+      "act_side": "scheduled",
+      "abstain_side": "held",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "document",
+      "title": "someone else's number",
+      "act_side": "scheduled",
+      "abstain_side": "held",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "document",
+      "title": "new account in an invoice",
+      "act_side": "executed",
+      "abstain_side": "denied",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "document",
+      "title": "amount over the bill limit",
+      "act_side": "scheduled",
+      "abstain_side": "held",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "repeat",
+      "title": "asked for twice, or once",
+      "act_side": "executed",
+      "abstain_side": "held",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "state",
+      "title": "after a bank timeout",
+      "act_side": "executed",
+      "abstain_side": "denied",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "state",
+      "title": "audit log down",
+      "act_side": "executed",
+      "abstain_side": "error",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "state",
+      "title": "not enough money",
+      "act_side": "executed",
+      "abstain_side": "held",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "state",
+      "title": "daily ceiling reached",
+      "act_side": "executed",
+      "abstain_side": "denied",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "state",
+      "title": "too many payments this hour",
+      "act_side": "executed",
+      "abstain_side": "denied",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "state",
+      "title": "account belongs to someone else",
+      "act_side": "executed",
+      "abstain_side": "held",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "state",
+      "title": "unknown payee",
+      "act_side": "executed",
+      "abstain_side": "denied",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    },
+    {
+      "category": "state",
+      "title": "malformed amount",
+      "act_side": "executed",
+      "abstain_side": "denied",
+      "correct": true,
+      "acted": true,
+      "wrongly_moved": false
+    }
+  ]
+}

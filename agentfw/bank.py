@@ -45,6 +45,9 @@ class Bank:
     ledger: list[Txn] = field(default_factory=list)
     documents: dict[str, str] = field(default_factory=dict)  # doc_id -> text (invoices, emails, web pages)
     now: float = field(default_factory=time.time)
+    # What the receiving bank says each account is called. In India RBI has told banks to offer this for
+    # RTGS and NEFT since April 2025. Unknown accounts return None, and the check is skipped.
+    account_names: dict[str, str] = field(default_factory=lambda: {"777700001111222": "Quick Trade Enterprises", "620044551890123": "Quick Trade Enterprises"})
 
     @classmethod
     def demo(cls, now: float = DEMO_NOW) -> "Bank":
@@ -80,6 +83,10 @@ class Bank:
     def get_statement(self, limit: int = 10) -> list[dict]:
         return [{"days_ago": round((self.now - t.ts) / 86400, 1), "kind": t.kind, "amount": t.amount,
                  "counterparty": t.counterparty, "memo": t.memo} for t in self.ledger[-limit:][::-1]]
+
+    def lookup_name(self, account_number: str, ifsc: str = "") -> str | None:
+        """The name the receiving bank holds for this account, or None if it can't say."""
+        return self.account_names.get("".join(str(account_number).split()))
 
     def list_billers(self) -> list[dict]:
         return [{"biller": name, "consumer_number": ref} for name, ref in self.billers.items()]

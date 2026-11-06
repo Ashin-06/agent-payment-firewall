@@ -97,14 +97,14 @@ class PolicyEngine:
             return self._spend(v, claim)
         v.raise_to(Action.APPROVE, f"amount ₹{amount:,.0f} was taken from a document, not confirmed by the customer")
 
-    def _check_limits(self, v: Verdict, bank: Bank, amount: float) -> None:
+    def _check_limits(self, v: Verdict, bank: Bank, amount: float, reserved: float = 0.0) -> None:
         lim = self.p["limits"]
         if amount > lim["per_transfer_max"]:
             v.raise_to(Action.DENY, f"₹{amount:,.0f} exceeds the per-payment ceiling of ₹{lim['per_transfer_max']:,}")
         elif amount > lim["approval_above"]:
             v.raise_to(Action.APPROVE, f"₹{amount:,.0f} is above the ₹{lim['approval_above']:,} confirmation threshold")
         day = [t for t in bank.ledger if t.kind in ("transfer", "bill") and bank.now - t.ts < 86400]
-        if sum(t.amount for t in day) + amount > lim["daily_total_max"]:
+        if sum(t.amount for t in day) + reserved + amount > lim["daily_total_max"]:
             v.raise_to(Action.DENY, f"daily outflow would exceed ₹{lim['daily_total_max']:,}")
         hour = [t for t in day if bank.now - t.ts < 3600]
         if len(hour) >= lim["max_payments_per_hour"]:
@@ -114,6 +114,8 @@ class PolicyEngine:
         near = [t for t in window if lo <= t.amount <= hi] + ([amount] if lo <= amount <= hi else [])
         if len(near) >= lim["structuring_count"]:
             v.raise_to(Action.DENY, f"{len(near)} payments just under the confirmation threshold within {lim['structuring_window_minutes']} min (splitting to avoid checks)")
+        if amount > lim["max_share_of_balance"] * bank.balance:
+            v.raise_to(Action.APPROVE, f"₹{amount:,.0f} is more than {lim['max_share_of_balance']:.0%} of the balance")
         q = self.p["quiet_hours"]
         hour_now = dt.datetime.fromtimestamp(bank.now, dt.timezone(dt.timedelta(minutes=q["utc_offset_minutes"]))).hour
         if q["start"] <= hour_now < q["end"]:
@@ -142,12 +144,26 @@ class PolicyEngine:
         if _DIGITS.search(memo) or any(re.search(r"\d", t) and re.search(r"[A-Za-z]", t) for t in _ENCODED.findall(memo)):
             v.raise_to(Action.APPROVE, "memo carries a long number or encoded text the customer did not type")
 
+    def _check_unusual(self, v: Verdict, bank: Bank, name: str, amount: float) -> None:
+        """Far more than this payee has ever been paid. Payees with no history have nothing to compare with."""
+        earlier = [t.amount for t in bank.ledger if t.counterparty == name and t.kind in ("transfer", "bill")]
+        multiple = self.p["limits"]["unusual_multiple"]
+        if earlier and amount > multiple * max(earlier):
+            v.raise_to(Action.APPROVE, f"₹{amount:,.0f} is over {multiple} times the most {name} has been paid (₹{max(earlier):,.0f})")
+
     def _check_new_payee(self, v: Verdict, ctx: Context, bank: Bank, name: str, acct: str, ifsc: str) -> None:
+        recent = sum(bank.now - p.added_at < 86400 for p in bank.payees.values())
+        if recent >= self.p["limits"]["max_new_payees_per_day"]:
+            v.raise_to(Action.DENY, f"{recent} payees were already added today")
         for p in bank.payees.values():
             same = skeleton(p.name) == skeleton(name) if skeleton(name) else p.name == name
             if same and normalise_account(p.account_number) != normalise_account(acct):
                 kind = "look-alike of" if p.name != name else "same name as"
                 v.raise_to(Action.DENY, f"'{name}' is a {kind} existing payee '{p.name}' but with a different account")
+        lookup = getattr(bank, "lookup_name", None)  # an adapter without one skips this check
+        registered = lookup(acct, ifsc) if lookup else None
+        if registered and not set(name_words(name)) & set(name_words(registered)):
+            v.raise_to(Action.APPROVE, f"the receiving bank says this account belongs to '{registered}', not '{name}'")
         if name != name.translate(CONFUSABLES):
             v.raise_to(Action.APPROVE, "payee name uses non-Latin look-alike letters")
         self._check_destination(v, ctx, name, acct, f"new payee '{name}'", new=True)
@@ -198,14 +214,28 @@ class PolicyEngine:
             self._check_memo(v, bank, ctx, ref, from_document_ok=True)
             others = [b for b in bank.billers if b != name]
         self._check_amount(v, ctx, bank, amount, name, others)
-        self._check_limits(v, bank, amount)
+        self._check_limits(v, bank, amount, sum(ctx.reserved.values()))
+        self._check_unusual(v, bank, name, amount)
         return v
 
-    def recheck(self, tool: str, args: dict, bank: Bank) -> Verdict:
+    def delay(self, tool: str, args: dict, bank: Bank, claim: Claim | None = None) -> str | None:
+        """Why a permitted payment should wait out the undo window, if it should. Nothing here can be
+        recalled once sent, so the riskier payments that don't need a person still get a way back."""
+        if tool not in MONEY_TOOLS or not self.p["undo"]["window_minutes"]:
+            return None
+        if tool == "transfer":
+            payee = bank.payees.get(str(args["payee_id"]))
+            if payee and (bank.now - payee.added_at) / 3600 < self.p["new_payee"]["cooldown_hours"]:
+                return "first payment to a new payee"
+        if claim and claim.key[1] == "document":
+            return "the amount came from a document"
+        return None
+
+    def recheck(self, tool: str, args: dict, bank: Bank, reserved: float = 0.0) -> Verdict:
         """Hard limits again at execution: other approvals may have run since this one was held."""
         v = Verdict()
         if tool in MONEY_TOOLS:
-            self._check_limits(v, bank, float(args["amount"]))
+            self._check_limits(v, bank, float(args["amount"]), reserved)
             v.reasons = [r for r in v.reasons if r.startswith("[DENY]")]
             v.action = Action.DENY if v.reasons else Action.ALLOW
         return v

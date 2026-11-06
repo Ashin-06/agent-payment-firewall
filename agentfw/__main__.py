@@ -2,6 +2,8 @@
 
     python -m agentfw bench [--live] [--only A01 B02]
     python -m agentfw demo
+    python -m agentfw paired
+    python -m agentfw mcp                          # MCP server over stdio
     python -m agentfw redteam [--sessions 20000] [--seed 7]
     python -m agentfw chat "Pay the Acme invoice inv-2291" [--no-firewall]
     python -m agentfw scan path/to/email.txt
@@ -34,6 +36,9 @@ def main(argv=None):
     b.add_argument("--only", nargs="*")
     b.add_argument("--json")
     sub.add_parser("demo", help="a few attacks side by side, with and without the firewall; no API key needed")
+    pa = sub.add_parser("paired", help="should-act and should-abstain pairs, scored only when both sides are right")
+    pa.add_argument("--out", default="results/paired.json")
+    sub.add_parser("mcp", help="the firewall as an MCP server over stdio")
     t = sub.add_parser("redteam", help="exploit suite, randomized attack sessions checked by an independent oracle, layer ablation")
     t.add_argument("--sessions", type=int, default=20000)
     t.add_argument("--seed", type=int, default=7)
@@ -88,6 +93,17 @@ def main(argv=None):
         from .bench import demo
 
         demo()
+    elif a.cmd == "paired":
+        from .paired import main as paired
+
+        sys.exit(paired(a.out))
+    elif a.cmd == "mcp":
+        from .mcp import main as mcp
+
+        try:
+            mcp()
+        except ValueError as e:
+            sys.exit(f"configuration error: {e}")
     elif a.cmd == "redteam":
         from .redteam import main as redteam
 
@@ -105,6 +121,8 @@ def main(argv=None):
         for st in res.steps:
             print(f"  {st.tool} {json.dumps(st.args, ensure_ascii=False)} -> {st.status}")
         print("\n" + res.text)
+        if gw.receipt(res.steps):
+            print("\nFrom the firewall, not the assistant:\n" + gw.receipt(res.steps))
         for p in gw.approvals.pending():
             print(f"\npending approval {p.id}: {p.tool} {p.args}\n  " + "\n  ".join(p.reasons))
     elif a.cmd == "scan":

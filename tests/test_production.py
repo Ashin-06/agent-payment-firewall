@@ -234,10 +234,10 @@ def test_expired_approvals_cannot_be_approved(tmp_path):
 def test_migrations_apply_once(tmp_path):
     url = f"sqlite:///{tmp_path / 'm.db'}"
     eng = db.engine(url)
-    assert db.migrate(eng) == ["001_init.sql", "002_approval_summary.sql"]
+    assert db.migrate(eng) == ["001_init.sql", "002_approval_summary.sql", "003_undo_window.sql"]
     assert db.migrate(eng) == []
     with eng.connect() as c:
-        assert [r[0] for r in c.execute(text("SELECT version FROM schema_migrations ORDER BY version"))] == [1, 2]
+        assert [r[0] for r in c.execute(text("SELECT version FROM schema_migrations ORDER BY version"))] == [1, 2, 3]
         tables = {r[0] for r in c.execute(text("SELECT name FROM sqlite_master WHERE type = 'table'"))}
     assert {"approvals", "audit_log"} <= tables
     env = {**{k: v for k, v in os.environ.items() if not k.startswith("AGENTFW_")}, "AGENTFW_DATABASE_URL": url}

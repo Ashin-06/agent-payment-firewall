@@ -30,6 +30,8 @@ from .provenance import IBAN_RE, IFSC_RE, Context, Label, canon, normalise_accou
 log = logging.getLogger("agentfw.gateway")
 SPECS = {t["name"]: t["input_schema"] for t in TOOL_SPECS}
 MAX_TEXT = 200
+RECEIPT_WORDS = {"executed": "Done", "scheduled": "Scheduled, can still be undone", "held": "Waiting for your approval", "denied": "Refused",
+                 "error": "Failed, nothing sent", "unknown": "Unknown: check your account"}
 
 
 class BadArguments(ValueError):
@@ -75,11 +77,38 @@ def validate(tool: str, args: object) -> dict:
 
 @dataclass
 class Outcome:
-    status: str  # executed | held | denied | error | unknown
+    status: str  # executed | scheduled | held | denied | error | unknown
     output: str  # text returned to the model
     verdict: Verdict | None = None
     approval_id: str | None = None
     raw: object = None
+
+
+def last_check(tool: str, args: dict, bank: Bank, limits: dict, reserved: float, frozen: str | None) -> str | None:
+    """The last line before the bank, on purpose sharing no logic with the policy engine or the parser.
+    Whatever those decide, and however a call got here (rules, an approval, the undo window), these hold.
+    If a bug in the rules lets something through, this is what is left."""
+    if frozen:
+        return f"money movement is frozen: {frozen}"
+    if tool == "add_payee":
+        return None if str(args.get("account_number", "")).strip() and str(args.get("name", "")).strip() else "a payee needs a name and an account"
+    if tool not in ("transfer", "pay_bill"):
+        return f"{tool} is not a payment tool"
+    amount = args.get("amount")
+    if isinstance(amount, bool) or not isinstance(amount, (int, float)) or not math.isfinite(amount) or amount <= 0:
+        return "the amount is not a positive number"
+    if amount > bank.balance:
+        return "the amount is more than the balance"
+    if amount > limits["per_transfer_max"]:
+        return f"₹{amount:,.0f} is over the ceiling for one payment"
+    if tool == "transfer" and str(args.get("payee_id")) not in bank.payees:
+        return "the payee does not exist"
+    if tool == "pay_bill" and args.get("biller") not in bank.billers:
+        return "the biller is not registered"
+    today = sum(t.amount for t in bank.ledger if t.kind in ("transfer", "bill") and bank.now - t.ts < 86400)
+    if today + reserved + amount > limits["daily_total_max"]:
+        return "this would go over the daily ceiling"
+    return None
 
 
 class Gateway:
@@ -94,6 +123,8 @@ class Gateway:
         self.frozen: str | None = None  # outcome unknown: no money moves until reconcile()
         self.refused = 0  # refused or held calls since the customer last spoke
         self.held: list[str] = []
+        if enforce:  # scheduled payments survive a restart, and still count against the limits
+            self.ctx.reserved = {p.id: float(p.args["amount"]) for p in self.approvals.scheduled()}
 
     def user_message(self, text: str) -> None:
         self.ctx.add(text, Label.USER, "customer")
@@ -108,6 +139,8 @@ class Gateway:
                 except (KeyError, ValueError):
                     pass  # already decided or expired
             self.held = []
+            for p in self.approvals.scheduled():
+                self.undo(p.id, "customer cancelled in chat")
 
     @property
     def halted(self) -> bool:
@@ -124,6 +157,7 @@ class Gateway:
             return Outcome("error", f"ERROR: this request could not be processed ({type(e).__name__}); nothing was sent.")
 
     def _call(self, tool: str, args: dict) -> Outcome:
+        self.settle_due()
         if tool not in SPECS:
             if self.enforce:
                 self.audit.append("denied", tool=str(tool)[:100], reasons=["not on the allowlist"])
@@ -151,7 +185,8 @@ class Gateway:
             return self._hold(tool, args, verdict)
         if verdict.claim:
             verdict.claim.use()
-        return self._execute(tool, args, verdict)
+        delay = self.policy.delay(tool, args, self.bank, verdict.claim) if self.enforce else None
+        return self._schedule(tool, args, verdict, delay) if delay else self._execute(tool, args, verdict)
 
     def _refuse(self, tool: str, why: str) -> Outcome:
         self.refused += 1
@@ -193,8 +228,17 @@ class Gateway:
             self.approvals.fail(approval_id)
             self.audit.append("denied", tool=p.tool, args=p.args, approval_id=approval_id, reasons=[problem])
             return Outcome("denied", f"BLOCKED after approval: {problem}", Verdict(Action.DENY, [problem]))
+        verdict = Verdict(Action.ALLOW, [f"approved by {p.decided_by}"])
+        delay = self.policy.delay(p.tool, p.args, self.bank) if self.enforce else None
+        if delay:
+            release_at = self.bank.now + self._window()
+            if not self.approvals.defer(approval_id, p.tool, p.args, release_at):
+                raise PermissionError("no approved request with that id")
+            self.ctx.reserved[approval_id] = float(p.args["amount"])
+            self._note("scheduled", tool=p.tool, args=p.args, approval_id=approval_id, release_at=release_at, reason=delay)
+            return self._scheduled_outcome(approval_id, delay, verdict)
         self.approvals.consume(approval_id, p.tool, p.args)
-        return self._execute(p.tool, p.args, Verdict(Action.ALLOW, [f"approved by {p.decided_by}"]))
+        return self._execute(p.tool, p.args, verdict)
 
     def _still_valid(self, p: Pending) -> str | None:
         if not self.enforce:
@@ -203,8 +247,74 @@ class Gateway:
             return f"money movement is frozen: {self.frozen}"
         if p.summary and p.summary != self.describe(p.tool, p.args):
             return "the payment no longer matches what was approved"
-        v = self.policy.recheck(p.tool, p.args, self.bank)
+        v = self.policy.recheck(p.tool, p.args, self.bank, sum(self.ctx.reserved.values()))
         return " ".join(v.reasons) if v.action == Action.DENY else None
+
+    # ----------------------------------------------------------------- undo window
+
+    def _window(self) -> float:
+        return self.policy.p["undo"]["window_minutes"] * 60
+
+    def _scheduled_outcome(self, pid: str, why: str, verdict: Verdict) -> Outcome:
+        minutes = self.policy.p["undo"]["window_minutes"]
+        return Outcome("scheduled", f"SCHEDULED (request {pid}), not sent yet: {why}. It goes out in {minutes} minutes unless the customer "
+                                    "undoes it. Tell the customer that, and that they can undo it.", verdict, pid)
+
+    def _schedule(self, tool: str, args: dict, verdict: Verdict, why: str) -> Outcome:
+        p = self.approvals.schedule(tool, args, verdict.reasons, self.describe(tool, args), self.bank.now + self._window())
+        try:
+            self.audit.append("scheduled", tool=tool, args=args, approval_id=p.id, release_at=p.release_at, reason=why)
+        except Exception:
+            self.approvals.undo(p.id, "audit unavailable")  # no record, no payment
+            log.exception("audit unavailable; not scheduling")
+            return Outcome("error", "ERROR: the audit log is unavailable, so nothing was scheduled.", verdict)
+        self.ctx.reserved[p.id] = float(args["amount"])
+        return self._scheduled_outcome(p.id, why, verdict)
+
+    def undo(self, pid: str, who: str) -> bool:
+        """Stop a scheduled payment. False if it has already gone out or doesn't exist."""
+        if not self.approvals.undo(pid, who):
+            return False
+        self.ctx.reserved.pop(pid, None)
+        self._note("undone", approval_id=pid, by=who)
+        return True
+
+    def settle_due(self) -> list[Outcome]:
+        """Send what has waited out its window, checking everything again first. Nothing goes while frozen."""
+        if not self.enforce:
+            return []
+        done = []
+        for p in self.approvals.scheduled():
+            if self.frozen:
+                break
+            if p.release_at > self.bank.now:
+                continue
+            self.ctx.reserved.pop(p.id, None)
+            problem = self._still_valid(p)
+            if problem:
+                self.approvals.undo(p.id, "firewall: " + problem[:120])
+                self._note("denied", tool=p.tool, args=p.args, approval_id=p.id, reasons=[problem])
+            elif self.approvals.release(p.id):
+                try:
+                    done.append(self._execute(p.tool, p.args, Verdict(Action.ALLOW, ["undo window passed"])))
+                except Exception:
+                    log.exception("settling a scheduled payment failed")
+        return done
+
+    def receipt(self, steps: list) -> str:
+        """What actually happened, in the gateway's words. The model can write anything in its reply,
+        including "done" for a payment that was refused, so this goes to the customer beside it."""
+        lines = []
+        for step in steps:
+            if step.tool in SPECS and step.tool not in READ_TOOLS:
+                what = self.describe(step.tool, step.args) if isinstance(step.args, dict) and "amount" in step.args or step.tool == "add_payee" else step.tool
+                lines.append(f"{RECEIPT_WORDS.get(step.status, step.status)}: {what}")
+        return "\n".join(lines)
+
+    def finish_undo_window(self) -> list[Outcome]:
+        """Move the clock past the window and settle. For tests and benchmarks, on a bank with a fixed clock."""
+        self.bank.now += self._window() + 1
+        return self.settle_due()
 
     def reconcile(self, who: str) -> None:
         """A person has checked the account after an unknown outcome; money may move again."""
@@ -212,6 +322,11 @@ class Gateway:
         self.frozen = None
 
     def _execute(self, tool: str, args: dict, verdict: Verdict) -> Outcome:
+        if self.enforce:
+            problem = last_check(tool, args, self.bank, self.policy.p["limits"], sum(self.ctx.reserved.values()), self.frozen)
+            if problem:
+                self._note("denied", tool=tool, args=args, reasons=[f"last check: {problem}"], line="last check")
+                return Outcome("denied", f"BLOCKED by the bank's security policy: {problem}. Do not retry; tell the customer.", Verdict(Action.DENY, [problem]))
         try:
             self.audit.append("executing", tool=tool, args=args)  # no record, no payment
         except Exception:

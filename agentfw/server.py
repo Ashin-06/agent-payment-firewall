@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import re
 import threading
+import time
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -20,7 +21,7 @@ from . import db, ops
 from .agent import make_agent, provider
 from .approval import ApprovalQueue
 from .audit import AuditLog
-from .bank import Bank
+from .bank import DEMO_NOW, Bank
 from .bench import SCENARIOS
 from .gateway import Gateway
 
@@ -34,7 +35,7 @@ if settings.production and not provider():
 store = db.connect(settings.database_url)
 audit_log = AuditLog(store, key=settings.secret["AUDIT_KEY"], previous_keys=settings.previous["AUDIT_KEY"])
 approvals = ApprovalQueue(store)
-app = FastAPI(title="Agent Payment Firewall", version="1.3.0")
+app = FastAPI(title="Agent Payment Firewall", version="1.4.0")
 ops.install(app, settings, {"database": lambda: store.connect().close()})
 _lock = threading.Lock()
 state: dict = {}
@@ -47,7 +48,13 @@ def reset(enforce: bool = True) -> None:
     for sc in sorted(SCENARIOS, key=lambda s: s.kind != "benign"):
         bank.documents.update(sc.docs)
     gw = Gateway(bank, audit=audit_log, approvals=approvals, enforce=enforce)
-    state.update(bank=bank, gw=gw, agent=None, enforce=enforce)
+    state.update(bank=bank, gw=gw, agent=None, enforce=enforce, started=time.time())
+
+
+def tick() -> None:
+    """The demo bank starts at a fixed daytime clock; from there it runs in real time, so undo windows pass."""
+    state["bank"].now = DEMO_NOW + time.time() - state["started"]
+    state["gw"].settle_due()
 
 
 reset()
@@ -89,12 +96,13 @@ def offline_reply(message: str) -> dict:
     res = TraceAgent(state["gw"]).run(" ".join(scenario.user), scenario.trace)
     return {"reply": f"Replayed scenario {scenario.id} ({scenario.title}) as a compromised assistant would run it. "
                      "See each tool call's decision above.",
-            "steps": [s.__dict__ for s in res.steps]}
+            "receipt": state["gw"].receipt(res.steps), "steps": [s.__dict__ for s in res.steps]}
 
 
 @app.post("/api/chat")
 def chat(body: ChatIn, ident: dict = Depends(ops.require("chat"))):
     with _lock:
+        tick()
         if not provider():
             return offline_reply(body.message)
         if state["agent"] is None:
@@ -108,12 +116,14 @@ def chat(body: ChatIn, ident: dict = Depends(ops.require("chat"))):
         except TypeError as e:  # the SDK raises this when no API key / auth token is configured
             state["agent"] = None
             raise HTTPException(503, "assistant unavailable: no credentials found (set GOOGLE_API_KEY or ANTHROPIC_API_KEY)") from e
-    return {"reply": res.text, "steps": [s.__dict__ for s in res.steps]}
+    return {"reply": res.text, "receipt": state["gw"].receipt(res.steps), "steps": [s.__dict__ for s in res.steps]}
 
 
 @app.get("/api/state")
 def get_state(ident: dict = Depends(ops.require("chat"))):
     b, gw = state["bank"], state["gw"]
+    with _lock:
+        tick()
     return {
         "enforce": state["enforce"],
         "frozen": gw.frozen,
@@ -122,6 +132,7 @@ def get_state(ident: dict = Depends(ops.require("chat"))):
         "ledger": b.get_statement(15),
         "documents": b.list_documents(),
         "pending": [{"id": p.id, "tool": p.tool, "args": p.args, "summary": p.summary, "reasons": p.reasons} for p in gw.approvals.pending()],
+        "scheduled": [{"id": p.id, "summary": p.summary, "seconds_left": max(0, int(p.release_at - b.now))} for p in gw.approvals.scheduled()],
     }
 
 
@@ -144,6 +155,14 @@ def decide(pid: str, body: DecisionIn, ident: dict = Depends(ops.require("approv
         except PermissionError as e:  # another replica got there first
             raise HTTPException(409, str(e)) from e
     return {"status": out.status, "output": out.output}
+
+
+@app.post("/api/scheduled/{pid}/undo")
+def undo(pid: str, ident: dict = Depends(ops.require("approve"))):
+    with _lock:
+        if not state["gw"].undo(pid, ident["user"] or "customer (console)"):
+            raise HTTPException(409, "too late: this payment has already gone out, or it doesn't exist")
+    return {"status": "undone"}
 
 
 @app.post("/api/reconcile")
