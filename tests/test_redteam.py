@@ -494,8 +494,9 @@ def test_round_ten_any_unreadable_statement_after_a_request_cancels_it():
 
     rng = random.Random(10)
     unknown = [w for w in dict.fromkeys(COMMON) if w not in _PLAIN_WORDS]
+    openers = [w for w in unknown if w != "open"]  # a follow-up starting with "open" counts as a reading task, by design
     for _ in range(3000):
-        said = f"{rng.choice(unknown).capitalize()} {rng.choice(unknown)}."
+        said = f"{rng.choice(openers).capitalize()} {rng.choice(unknown)}."
         m = Mandates()
         m.add("Send ₹500 to Mom.", 0.0, ["Mom", "Rohan Mehta"])
         m.add(said, 0.0, ["Mom", "Rohan Mehta"])
