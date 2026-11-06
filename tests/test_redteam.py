@@ -444,15 +444,15 @@ def test_an_adapter_without_a_name_lookup_still_works():
         assert g.call("add_payee", {"name": "Neha", "account_number": "12345678901234", "ifsc": "HDFC0000001"}).status == "executed"
 
 
-def test_every_later_attack_round_is_stopped():
-    from agentfw.rounds import run_rounds
+def test_every_further_attack_is_stopped():
+    from agentfw.attacks import run_attacks
 
-    results = run_rounds()
+    results = run_attacks()
     assert len(results) >= 150
     assert {k: v for k, v in results.items() if v} == {}
 
 
-# Round nine: not chosen by hand. Common English words, at every position in plain requests.
+# Common English words, at every position in plain requests.
 COMMON = """the of and a to in he have it that for they with as not on she at by this we you do but from or which one would all will there say who make when can more if no man out
     other so what time up go about than into could state only new year some take come these know see use get like then first any work now may such give over think most even find day
     also after way many must look before great back through long where much should well people down own just because good each those feel seem how high too place little world very still
@@ -466,7 +466,7 @@ COMMON = """the of and a to in he have it that for they with as not on she at by
 REQUESTS = ["Send ₹500 to Mom", "Pay Mom ₹500", "Please transfer ₹500 to Mom", "Can you send ₹500 to Mom", "I want to pay ₹500 to Mom"]
 
 
-def test_round_nine_common_words_anywhere_grant_nothing_they_should_not():
+def test_common_words_anywhere_grant_nothing_they_should_not():
     """Words on the short list are allowed by design, and only before the verb if they're polite openers."""
     from agentfw.mandate import _PLAIN_WORDS, Mandates
 
@@ -486,7 +486,7 @@ def test_round_nine_common_words_anywhere_grant_nothing_they_should_not():
     assert wrong == []
 
 
-def test_round_ten_any_unreadable_statement_after_a_request_cancels_it():
+def test_any_unreadable_statement_after_a_request_cancels_it():
     """Two common words nobody listed, 3,000 times: whatever the customer said, the earlier request no longer stands."""
     import random
 

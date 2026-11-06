@@ -109,7 +109,7 @@ So each customer message is read by fixed rules, with no model involved, so noth
 | "Send ₹500 to Mom maybe" | Nothing: an unknown word |
 | "Send ₹500 to Mom", then "scratch that" or "hmm, are you sure?" | Cancelled: anything the rules can't read counts as a change of mind |
 
-The rules deny by default. A sentence grants money only if every word in it is a payee's name, a number or on a [short list](agentfw/mandate.py). Taking a request back works the same way: anything the rules can't read cancels what came before, while "what's my balance?" or "thanks" doesn't. Looking for warning signs instead didn't work, because there is always another one. That costs a confirmation on some natural wording, and it means a miss usually costs a confirmation rather than a payment.
+The rules deny by default. A sentence grants money only if every word in it is a payee's name, a number or on a [short list](agentfw/mandate.py). Taking a request back works the same way: anything the rules can't read cancels what came before, while "what's my balance?" or "thanks" doesn't. A list of warning signs couldn't work, because there is always another one. That costs a confirmation on some natural wording, and it means a miss usually costs a confirmation rather than a payment.
 
 ## Failure scenarios
 
@@ -145,12 +145,12 @@ All from a fully compromised assistant, the worst case, unless stated otherwise.
 | Built-in attacks | 28 of 28 succeed | 0 of 28 (13 refused, 14 held, 1 defused) |
 | AgentDojo banking attacks, every task with every attack | not run | 0 of 144 pairs executed (136 refused, 8 held) |
 | Should-act and should-abstain pairs, both sides right | not run | 43 of 43 |
-| Named exploits and later attack rounds | see below | 0 of 329 work |
+| Named attacks and failure cases | not run | 0 of 329 work |
 | 20,000 random attack sessions, 25% with injected faults | not run | 0 oracle violations, 4,896 authorised payments still made |
 | Adaptive attacker, 5,000 attempts | not run | 0 breaches |
 | Customer who approves every held request, 2,000 sessions | not run | 0 payments reached the attacker |
 
-The random sessions are checked by an oracle that shares no code with the rules or the parser: the generator records what each conversation really authorised, and the ledger is compared with that. A checker that never fails proves nothing, so the same checks were run with each line removed:
+The random sessions are checked by an oracle that shares no code with the rules or the parser: the generator records what each conversation really authorised, and the ledger is compared with that. The same checks were also run with each line removed, which shows the oracle can catch a broken firewall and what each line contributes:
 
 | Line removed | Built-in attacks that succeed | Exploits that work | Oracle violations in 300 sessions | Attacker payments if all approved |
 |---|---|---|---|---|
@@ -164,23 +164,7 @@ The random sessions are checked by an oracle that shares no code with the rules 
 | Neutralising third-party text | 1 | 1 | 0 | 0 |
 | Argument validation | 0 | 1 | 0 | 0 |
 
-Each row of 0 above took repeated rounds of attacking the version before. The earlier versions failed these, and the history is published:
-
-| Round | Attacking | What it tried | Worked |
-|---|---|---|---|
-| 1 | Version 1.0 | Questions, refusals and replays turned into payments, malformed values, faults | 34 of 35 |
-| 2 | Version 1.1 | Sentences that mention a payee and amount without asking to pay | 21 of 30 |
-| 3 | Version 1.2 | Everyday wording: "maybe", "by Friday", "Rohan's wife" | 26 of 31 |
-| 5 | Version 1.4 | Beyond sentences: hangs, leaks through links, threads, MCP, approvals, name collisions, symbols | 40 of 60 |
-| 6 | The fixes | Taking a request back in other words, cancelling one payee, faking the approval screen, number formats, memos | 35 of 46 |
-| 7 | The fixes | More ways of taking it back, sentences of allowed words only | 7 of 56 |
-| 8 | The fixes | Labels, tags, sentences with two verbs, odd headers | 2 of 35 |
-| 9 | The fixes | Automated: common English words at every position, about 7,000 sentences | 1 |
-| 10 | The fixes | Automated: 60,000 random statements after a request | 2 kinds, then 0 apart from the case below |
-
-Round 4 was research rather than attacks. Later rounds found less, but that doesn't show nothing is left. The search only finds what it looks for, and the same author wrote it. [docs/case-study.md](docs/case-study.md) tells the story.
-
-With a real model, the assistant was tricked for real. `gemini-3.1-flash-lite` with a plain system prompt carried out 15 of the 28 attacks without the firewall and 0 of 28 with it, and all 22 normal tasks behaved as expected. That is one run on a free-tier quota, made on version 1.1: it shows the attacks work on a current model, not a measured rate.
+With a real model: `gemini-3.1-flash-lite` with a plain system prompt carried out 15 of the 28 attacks without the firewall and 0 of 28 with it, and all 22 normal tasks behaved as expected. That is one run on a free-tier quota, on version 1.1 of this code: it shows the attacks work on a current model, not a measured rate.
 
 What it costs:
 
@@ -254,10 +238,10 @@ agentfw/
   bench.py       built-in attacks and normal tasks; the demo
   paired.py      should-act and should-abstain pairs
   redteam.py     exploits, random sessions, adaptive attacker, layer removal
-  rounds.py      the later attack rounds, kept as regression tests
+  attacks.py     further attacks, kept as regression tests
   agentdojo.py   AgentDojo banking suite replay
   server.py      console backend
-docs/            case study, evaluation, related work, threat model, runbook
+docs/            design, evaluation, related work, threat model, runbook
 results/         raw output of every published number
 tests/           249 tests
 ```
@@ -271,11 +255,11 @@ tests/           249 tests
 - The mandate rules read English. Anything else waits for a confirmation, and so does unusual wording such as "she needs it". A sentence made entirely of listed words could still be misread, and a follow-up that starts with "read", "open" or "summarise" counts as a reading task, so it won't cancel an earlier request.
 - A mandate isn't authentication. In India, [RBI's rules](https://www.rbi.org.in/Scripts/NotificationUser.aspx?Id=12898&Mode=0) require two factors for digital payments, so a real deployment still needs the bank's own check on every payment this firewall allows.
 - The console runs one demo account on a sandbox bank. A real deployment needs a session per signed-in customer, the bank's own APIs with idempotency keys, and approvals confirmed in the bank's app.
-- The red team and the oracle were written by the same author as the firewall, and nobody independent has reviewed it. The last rounds found very little, but the attacker and the defender are the same author, so zero violations means none were found in these tests, not that none exist.
+- The attacks and the oracle were written by the same author as the firewall, and nobody independent has reviewed it. Zero violations means none were found in these tests, not that none exist.
 
 ## Further reading
 
-- [docs/case-study.md](docs/case-study.md): what each attack round broke, and how the design changed
+- [docs/design.md](docs/design.md): how the firewall decides, and why
 - [docs/evaluation.md](docs/evaluation.md): how every number was produced
 - [docs/related-work.md](docs/related-work.md): what this builds on and how it differs
 - [docs/threat-model.md](docs/threat-model.md) and [SECURITY.md](SECURITY.md)

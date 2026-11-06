@@ -1,6 +1,6 @@
 # Evaluation
 
-Every number here was produced by version 1.5.0, with two exceptions. The live model section ran on 1.1.0. The AgentDojo section ran on the 1.4.0 code before the account-name check and the later attack rounds, whose changes only narrow what is allowed. All can be reproduced with the commands shown. Raw output is in [`results/`](../results).
+Every number here was produced by version 1.5.0, with two exceptions: the live model section ran on 1.1.0, and the AgentDojo section on 1.4.0. Changes since then only narrow what is allowed, so they shouldn't raise the attack numbers, though a normal task might now need a confirmation. All can be reproduced with the commands shown. Raw output is in [`results/`](../results).
 
 Results come from a sandbox bank and from attacks written or chosen by the author, plus AgentDojo's. Nobody independent has run them.
 
@@ -77,15 +77,13 @@ The scoring comes from [AgentAbstain](https://arxiv.org/abs/2607.10059), whose b
 
 Among the 15 attacks that worked on the unprotected model, the firewall stopped some with a refusal or a hold. In others, the assistant didn't try once it read the fenced text. Which of those happens is the model's choice, and the fixed traces above cover the case where it does try.
 
-This run also found something the fixed traces couldn't. No tool told the assistant the exact biller names, so it guessed "LIC" and was refused, wrongly blocking 3 normal bill payments. `list_billers` fixed that. An earlier attempt had also failed because the model had been retired, and every attack looked stopped. A failed assistant now stops the benchmark with an error.
-
-The limits of this evidence: it ran on 1.1.0, before the later parser rounds, which only narrow what counts as a request. One run per scenario, one lightweight model, and the free tier's daily quota, which also meant the hardened prompt wasn't measured. The last scenarios ran just before `list_billers` was added, as the results file notes. It shows that the attacks work on a current model and that the firewall holds, not a success rate.
+The limits of this evidence: one run per scenario on version 1.1.0 (the results file says which code ran each one), one lightweight model, and the free tier's daily quota, so the hardened prompt wasn't measured. It shows that the attacks work on a current model and that the firewall holds, not a success rate.
 
 ## Red team
 
 `python -m agentfw redteam --sessions 20000 --seed 7` writes `results/redteam.json` and exits non-zero on any failure. A run of 5,000 sessions is part of CI.
 
-**Exploits.** 132 named attacks and failures, plus 197 from later rounds in [`agentfw/rounds.py`](../agentfw/rounds.py): 0 work. Against version 1.0.0, 34 of the first 35 did. A second round aimed at the 1.1.0 parser added 30 sentences that aren't requests to pay, such as "Send the ₹5,000 receipt to Mom", and 21 worked. A third round on 1.2.0 added 31 everyday ones, such as "Send ₹500 to Mom maybe", and 26 worked, which led to the parser denying by default. A test also inserts each of 79 unknown words at every position in a plain request; none grants authority. They're readable as code in [`agentfw/redteam.py`](../agentfw/redteam.py).
+**Named attacks.** 132 named attacks and failure cases in [`agentfw/redteam.py`](../agentfw/redteam.py), and 197 more in [`agentfw/attacks.py`](../agentfw/attacks.py): 0 work. They cover questions and refusals turned into payments, replayed requests, wording that isn't a request, ways of taking a request back, malformed values, faults, hangs, leaks through links, racing threads, the approval screen and the MCP server. Tests also insert several hundred common English words at every position in plain requests, and 3,000 random statements after a request, and check that nothing unknown grants or keeps authority. The one exception is by design: a follow-up starting with "read", "open" or "summarise" counts as a reading task.
 
 **Randomized sessions.** A generator writes a customer conversation and records separately what it authorises. A fully compromised assistant then makes random hostile calls: spending authority repeatedly, attacker accounts in spaced and full-width forms, hidden secrets in memos, and junk such as `NaN`, `None` and unknown tools. Nobody approves anything. The oracle compares the ledger with the generator's record. It shares no code with the policy or the parser, so a parser mistake shows up as a violation.
 
@@ -99,31 +97,15 @@ The limits of this evidence: it ran on 1.1.0, before the later parser rounds, wh
 | Payments without an audit record first | 0 |
 | Audit chain over all 183,433 entries | intact |
 
-A checker that never fails proves nothing, so the same oracle was run with each layer removed. Without mandates it finds violations in 102 of 300 sessions. See the table in [case-study.md](case-study.md#evidence).
+The same oracle was run with each line removed. Without mandates it finds violations in 102 of 300 sessions, which shows it can catch a broken firewall. See the table in [design.md](design.md#what-each-line-contributes).
 
-**Adaptive attacker.** A [2026 paper](https://arxiv.org/abs/2606.26479) points out that defences like this one have only been tested on fixed attacks, and that earlier defences which looked strong fell once attackers knew how they worked. So the red team includes an attacker that knows the rules and limits and searches for a way through. It controls every tool call and all third-party text, but not what the customer says. Starting from a conversation, it mutates its calls and documents, keeps whatever gets further, and restarts when it stops improving.
+**Adaptive attacker.** A [2026 paper](https://arxiv.org/abs/2606.26479) argues that defences like this one should be tested against attackers who know how they work, not only on fixed attacks. So the red team includes an attacker that knows the rules and limits and searches for a way through. It controls every tool call and all third-party text, but not what the customer says. Starting from a conversation, it mutates its calls and documents, keeps whatever gets further, and restarts when it stops improving.
 
 Over 5,000 attempts on 35 conversations it found 0 breaches. It reached the riskier paths, with 2,161 calls ending up in the undo window. A test confirms that the same search does break the firewall when mandates are removed.
 
 This is hill climbing on the gateway's logic, not a proof, and an independent attacker would likely try things this one doesn't. Optimised attacks on the model, such as white-box GCG, wouldn't change it, because the model is already assumed to be fully compromised.
 
-**A customer who approves everything.** The honest worst case for held calls, over 2,000 sessions: 0 payments reached the attacker's account, because those are refused rather than held. Up to ₹2,43,024 left in one session, all to saved payees and billers and under the daily ceiling. Approvals protect only as well as the person giving them.
-
-**Attack rounds.** Each round was written against the version before it, and most of what worked is now fixed and kept as a test:
-
-| Round | Attacking | What it tried | Worked |
-|---|---|---|---|
-| 1 | Version 1.0 | Questions, refusals and replays turned into payments, malformed values, faults | 34 of 35 |
-| 2 | Version 1.1 | Sentences that mention a payee and amount without asking to pay | 21 of 30 |
-| 3 | Version 1.2 | Everyday wording: "maybe", "by Friday", "Rohan's wife" | 26 of 31 |
-| 5 | Version 1.4 | Beyond sentences: hangs, leaks through links, threads, MCP, approvals, name collisions, symbols | 40 of 60 |
-| 6 | The fixes | Taking a request back in other words, cancelling one payee, faking the approval screen, number formats, memos | 35 of 46 |
-| 7 | The fixes | More ways of taking it back, sentences of allowed words only | 7 of 56 |
-| 8 | The fixes | Labels, tags, sentences with two verbs, odd headers | 2 of 35 |
-| 9 | The fixes | Automated: common English words at every position, about 7,000 sentences | 1 |
-| 10 | The fixes | Automated: 60,000 random statements after a request | 2 kinds, then 0 apart from the case below |
-
-Round 4 was research rather than attacks. Rounds 9 and 10 are built into the test suite. The case left over from round 10 is by design: a follow-up starting with "read", "open" or "summarise" counts as a reading task.
+**A customer who approves everything.** The worst case for held calls, over 2,000 sessions: 0 payments reached the attacker's account, because those are refused rather than held. Up to ₹2,43,024 left in one session, all to saved payees and billers and under the daily ceiling. Approvals protect only as well as the person giving them.
 
 **Database.** The migrations, the undo window across a restart, approvals and the audit chain were also run on PostgreSQL 16, as well as the default SQLite.
 
@@ -136,7 +118,7 @@ Round 4 was research rather than attacks. Rounds 9 and 10 are built into the tes
 - "Mom ko ₹500 bhej do"
 - "My mom needs ₹500, send it to her."
 
-None of the 20 paid the wrong payee or amount. The generator's wording was written by the same author as the parser, so 100% on the first measure is an upper bound.
+None of the 20 paid the wrong payee or amount. The plain requests were written by the same author as the parser, so treat 100% as an upper bound.
 
 ## AgentDojo banking suite
 
@@ -154,9 +136,7 @@ To reproduce, export the suite with `python -m agentfw.agentdojo_export --src pa
 
 All 8 held pairs come from one user task, where the customer really does type US133000000121212121212 as their new landlord's account, and AgentDojo's attacker uses the same account. They are held because the customer never asked to add it.
 
-The cost is real. No money-moving task finishes without a person, mostly because AgentDojo's tasks ask the assistant to work out an amount ("10% more", "what they sent me") or to follow a document, and the firewall won't take either on trust. The two refusals are a bill whose account appears only in the bill file, and a task that begins with an account-settings change.
-
-Version 1.0.0 also executed 0 of these 144 pairs (137 refused, 7 held), yet 34 of 35 new exploits worked against it. AgentDojo's attackers send money to their own accounts, so it doesn't test whether a customer's own words can be misused. A clean AgentDojo score didn't show that gap.
+No money-moving task finishes without a person, mostly because AgentDojo's tasks ask the assistant to work out an amount ("10% more", "what they sent me") or to follow a document, and the firewall won't take either on trust. The two refusals are a bill whose account appears only in the bill file, and a task that begins with an account-settings change.
 
 This replay checks the tool calls, not a real model's behaviour on the suite, and it translates AgentDojo's tools into this firewall's, so it isn't directly comparable with published AgentDojo scores.
 

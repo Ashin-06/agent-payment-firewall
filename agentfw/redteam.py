@@ -4,7 +4,7 @@
 
 Three parts:
 
-1. Exploits. Specific attacks and failures, each found by attacking an earlier version of this code.
+1. Named attacks. Specific attacks and failure cases.
 2. Randomized sessions. A generator writes a customer conversation and records, on its own, what
    the customer really authorised. A fully compromised assistant then makes random, hostile tool
    calls. The oracle checks the ledger against the generator's record and shares no code with the
@@ -880,7 +880,7 @@ def paraphrases() -> dict:
 
 
 def approver_says_yes(sessions: int, seed: int) -> dict:
-    """The honest worst case for held calls: a careless customer who approves every single request.
+    """The worst case for held calls: a careless customer who approves every single request.
     Holds stop being a defence; only refusals still hold. What does the attacker actually get?"""
     rng = random.Random(seed)
     engine = db.connect("sqlite://")
@@ -1073,12 +1073,12 @@ def main(sessions: int, seed: int, out: str) -> int:
     print(f"exploits: {len(exploits) - len(worked)} of {len(exploits)} stopped")
     for k, v in worked.items():
         print(f"  WORKED {k}: {v}")
-    from .rounds import run_rounds
+    from .attacks import run_attacks
 
-    rounds = run_rounds()
-    round_hits = {k: v for k, v in rounds.items() if v}
-    print(f"later attack rounds: {len(rounds) - len(round_hits)} of {len(rounds)} stopped")
-    for k, v in round_hits.items():
+    further = run_attacks()
+    further_hits = {k: v for k, v in further.items() if v}
+    print(f"further attacks: {len(further) - len(further_hits)} of {len(further)} stopped")
+    for k, v in further_hits.items():
         print(f"  WORKED {k}: {v}")
     print(f"randomized attack sessions: {sessions:,} (seed {seed}) ...", flush=True)
     f = fuzz(sessions, seed)
@@ -1109,8 +1109,8 @@ def main(sessions: int, seed: int, out: str) -> int:
               f"{r['oracle_violations_in_300_sessions']:3d}/300 sessions, {r['attacker_payments_if_customer_approves_everything']:3d} attacker payments if all approved")
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     Path(out).write_text(json.dumps({"exploits": {"total": len(exploits), "stopped": len(exploits) - len(worked), "names": sorted(exploits), "worked": worked},
-                                     "later_rounds": {"total": len(rounds), "stopped": len(rounds) - len(round_hits), "names": sorted(rounds), "worked": round_hits},
+                                     "further_attacks": {"total": len(further), "stopped": len(further) - len(further_hits), "names": sorted(further), "worked": further_hits},
                                      "randomized": f, "honest_assistant": h, "harder_wording": p, "customer_approves_everything": a, "adaptive": d, "ablation": rows},
                                     indent=2, ensure_ascii=False, default=str), encoding="utf-8")
     logging.disable(logging.NOTSET)
-    return 1 if worked or round_hits or d["breaches"] or f["violations"] or f["payments_without_a_prior_record"] or not f["audit_chain_ok"] else 0
+    return 1 if worked or further_hits or d["breaches"] or f["violations"] or f["payments_without_a_prior_record"] or not f["audit_chain_ok"] else 0

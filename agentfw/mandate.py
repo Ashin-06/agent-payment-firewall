@@ -15,7 +15,7 @@ Deny by default. Spotting warning signs can't work, because there is always anot
 ₹500 to Mom maybe", "to Rohan's wife", "by Friday"). So a sentence grants money only if every word
 in it is understood: a payee's name, an amount, or a word on the short list below. One unknown word
 and the payment waits for the customer. Misreading costs a confirmation, not a payment.
-ponytail: English only; other languages always end in a confirmation. Add a word list per locale.
+English only: other languages always end in a confirmation. Add a word list per locale.
 """
 from __future__ import annotations
 

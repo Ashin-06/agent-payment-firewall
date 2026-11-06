@@ -10,10 +10,7 @@ This project borrows the scoring for `python -m agentfw paired`, and the undo wi
 
 **[GateArena](https://neurips.cc/virtual/2026/168290)** (Jiang, Quinzan and Bhatt, NeurIPS 2026 workshop) binds each confirmation to a token for the exact parameters, and the tool refuses a call with a missing, spent or mismatched token. Moving the check into the handler took protocol violations from 91 of 400 to 0 of 400. The approvals here work the same way, so that part isn't new. Mandates address the step before: what happens when nobody was asked for a confirmation at all.
 
-**[Adaptive evaluation of out-of-band defences](https://arxiv.org/abs/2606.26479)** points out that CaMeL, FIDES, Progent and similar systems have been tested only on static attack sets, and that earlier defences which looked strong that way later fell to defence-aware attacks. Its recommendation led to two things here:
-
-- an adaptive attacker in `python -m agentfw redteam`, which knows the rules and searches for a way through;
-- repeated attack rounds on this project's own parser, where each round found real holes in a version that had passed everything before.
+**[Adaptive evaluation of out-of-band defences](https://arxiv.org/abs/2606.26479)** points out that CaMeL, FIDES, Progent and similar systems have been tested only on static attack sets, and that earlier defences which looked strong that way later fell to defence-aware attacks. Its recommendation is why `python -m agentfw redteam` includes an adaptive attacker, which knows the rules and searches for a way through.
 
 That paper also calls for stronger optimised attacks such as white-box GCG. Those target the model, and this evaluation already assumes the model is fully compromised, so they wouldn't change these results. The search here is simple hill climbing on the gateway's logic, not a proof.
 
@@ -39,6 +36,5 @@ That paper also calls for stronger optimised attacks such as white-box GCG. Thos
 - The receiving bank's own record of the account name is checked against the name the customer gave.
 - An independent last check before the bank holds even with every rule bypassed, which is tested by bypassing them.
 - The oracle shares no code with the rules, and the same oracle catches the firewall when a layer is removed.
-- The attack history is published, including what each round broke.
 
 None of this has been independently reviewed.

@@ -75,7 +75,7 @@ class AuditLog:
         return None
 
     def verify(self) -> tuple[bool, str]:
-        """ponytail: walks the whole chain; checkpoint signed heads once it grows past millions of rows."""
+        """Walks the whole chain. Checkpoint signed heads once it grows past millions of rows."""
         prev, n = self.GENESIS, 0
         with self.db.connect() as c:
             for seq, raw in c.execute(text("SELECT seq, entry FROM audit_log ORDER BY seq")):
