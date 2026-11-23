@@ -33,7 +33,7 @@ idna==3.20
     #   httpx2
 jiter==0.18.0
     # via anthropic
-opentelemetry-api==1.45.1
+opentelemetry-api==1.45.2
     # via
     #   anthropic
     #   fastapi

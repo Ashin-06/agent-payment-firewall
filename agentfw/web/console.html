@@ -90,11 +90,11 @@ async function refresh() {
   $("pending").innerHTML = s.pending.length ? s.pending.map((p) => `
     <div class="pending"><div class="what">${esc(p.summary || (p.tool + " " + JSON.stringify(p.args)))}</div>
       ${p.reasons.map((r) => `<div class="reason">${esc(r.replace(/^\[\w+\]\s*/, ""))}</div>`).join("")}
-      <div style="margin-top:8px;display:flex;gap:8px"><button class="approve" data-id="${p.id}" data-ok="1">Approve</button><button class="deny" data-id="${p.id}" data-ok="0">Decline</button></div>
+      <div style="margin-top:8px;display:flex;gap:8px"><button class="approve" data-id="${esc(p.id)}" data-ok="1">Approve</button><button class="deny" data-id="${esc(p.id)}" data-ok="0">Decline</button></div>
     </div>`).join("") : '<p class="reason">Nothing pending.</p>';
   $("scheduled").innerHTML = s.scheduled.length ? s.scheduled.map((p) => `
     <div class="pending"><div class="what">${esc(p.summary)}</div>
-      <div class="reason">Goes out in about ${Math.ceil(p.seconds_left / 60)} min unless you undo it.</div>
+      <div class="reason">Goes out in about ${esc(Math.ceil(p.seconds_left / 60))} min unless you undo it.</div>
       <div style="margin-top:8px"><button class="deny" data-undo="${esc(p.id)}">Undo</button></div>
     </div>`).join("") : '<p class="reason">Nothing scheduled.</p>';
   $("account").innerHTML = `<p><strong>${inr(s.balance.balance)}</strong> available</p>
@@ -104,7 +104,7 @@ async function refresh() {
   const a = await ar.json();
   if (!ar.ok) { $("chain").innerHTML = ""; $("audit").innerHTML = `<p class="reason">${esc(a.detail)}</p>`; return; }
   $("chain").innerHTML = a.verified ? '<span class="chain-ok">· chain intact</span>' : '<span class="chain-bad">· ' + esc(a.message) + "</span>";
-  $("audit").innerHTML = a.entries.slice().reverse().map((e) => `<div>#${e.seq} <b>${esc(e.event)}</b> ${esc(e.tool || "")} ${esc((e.reasons || []).join(" "))}</div>`).join("");
+  $("audit").innerHTML = a.entries.slice().reverse().map((e) => `<div>#${esc(e.seq)} <b>${esc(e.event)}</b> ${esc(e.tool || "")} ${esc((e.reasons || []).join(" "))}</div>`).join("");
 }
 
 $("pending").addEventListener("click", async (ev) => {
@@ -112,7 +112,7 @@ $("pending").addEventListener("click", async (ev) => {
   if (!b) return;
   const r = await api(`/api/approvals/${b.dataset.id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ approve: b.dataset.ok === "1" }) });
   const body = await r.json();
-  add("step", `approval ${esc(b.dataset.id)}: <b class="${r.ok ? body.status : "error"}">${esc(r.ok ? body.status : body.detail)}</b>`);
+  add("step", `approval ${esc(b.dataset.id)}: <b class="${esc(r.ok ? body.status : "error")}">${esc(r.ok ? body.status : body.detail)}</b>`);
   refresh();
 });
 
@@ -134,7 +134,7 @@ $("chat").addEventListener("submit", async (ev) => {
   const r = await api("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: text }) });
   const body = await r.json();
   if (!r.ok) { add("msg bot", esc(body.detail)); return; }
-  for (const s of body.steps) add("step", `${esc(s.tool)} ${esc(JSON.stringify(s.args))} → <b class="${s.status}">${s.status}</b>`);
+  for (const s of body.steps) add("step", `${esc(s.tool)} ${esc(JSON.stringify(s.args))} → <b class="${esc(s.status)}">${esc(s.status)}</b>`);
   add("msg bot", esc(body.reply));
   if (body.receipt) add("receipt", `<b>From the firewall, not the assistant</b>\n${esc(body.receipt)}`);
   refresh();
