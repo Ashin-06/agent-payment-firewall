@@ -145,7 +145,14 @@ class LLMAgent:
             for block in resp.content:
                 if block.type != "tool_use":
                     continue
-                args = block.input if isinstance(block.input, dict) else json.loads(block.input)
+                try:
+                    args = block.input if isinstance(block.input, dict) else json.loads(block.input)
+                except json.JSONDecodeError:
+                    args = None
+                if not isinstance(args, dict):  # malformed arguments never reach a payment tool
+                    results.append({"type": "tool_result", "tool_use_id": block.id,
+                                    "content": "invalid tool arguments: expected a JSON object", "is_error": True})
+                    continue
                 out = self.gw.call(block.name, args)
                 steps.append(Step(block.name, args, out.status, out.output))
                 results.append({"type": "tool_result", "tool_use_id": block.id, "content": out.output,
